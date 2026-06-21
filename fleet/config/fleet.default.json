@@ -1,0 +1,17 @@
+{
+  "fleet": {
+    "intervalMinutes": 5,
+    "maxConcurrentLoops": 3,
+    "maxUnattendedHours": 720,
+    "defaultAutonomy": "merge-main",
+    "defaultRetryCap": 2,
+    "notifications": { "desktop": true },
+    "consensus": { "reviewers": 3, "minCoverage": 1 },
+    "safety": { "requireGitForLive": true, "deployPolicies": {} },
+    "globalGuardrails": [
+      "Never deploy, publish, or push autonomously.",
+      "Escalate real payments, real identity verification, and production secret rotation to the human."
+    ]
+  },
+  "apps": []
+}

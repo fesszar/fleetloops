@@ -1,0 +1,20 @@
+{
+  "name": "app-fleet-runner",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Runtime-agnostic orchestrator + local dashboard for autonomous coding loops across Gideon's app fleet.",
+  "bin": { "fleet": "./fleet.mjs" },
+  "scripts": {
+    "status": "node fleet.mjs status",
+    "run": "node fleet.mjs run --dry-run",
+    "run:live": "node fleet.mjs run --live",
+    "approvals": "node fleet.mjs approvals",
+    "serve": "node bridge-server.mjs",
+    "serve:watch": "node bridge-server.mjs --watch --interval 15",
+    "serve:live": "node bridge-server.mjs --watch --interval 15 --live",
+    "bootstrap": "node bootstrap.mjs",
+    "add": "node fleet.mjs add"
+  },
+  "engines": { "node": ">=18" }
+}

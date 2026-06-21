@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Info.plist for Fleet.app. LSUIElement makes it a menu-bar-only agent (no Dock icon, no
+     main menu). build-app.sh copies this into Fleet.app/Contents/Info.plist and stamps the
+     version. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Fleet</string>
+    <key>CFBundleDisplayName</key>
+    <string>Fleet</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.fleet.app</string>
+    <key>CFBundleExecutable</key>
+    <string>Fleet</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+
+    <!-- Menu-bar agent: no Dock tile, no application menu. -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <!-- We bundle our own Node + engine; nothing here talks to arbitrary servers by default.
+         The engine reaches only the AI provider endpoints the user configured. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- The dashboard is served over http on 127.0.0.1; allow loopback only. -->
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>© Fleet</string>
+
+    <!-- Sparkle auto-update appcast (filled in for real at release). -->
+    <key>SUFeedURL</key>
+    <string>https://updates.fleet.app/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY</string>
+</dict>
+</plist>

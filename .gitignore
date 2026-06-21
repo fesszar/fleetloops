@@ -1,0 +1,37 @@
+# --- runtime state (never commit a user's fleet data or secrets) ---
+fleet/state/
+fleet/worktrees/
+fleet.config.json
+*.config.json.*-backup
+bridge.port
+bridge.token
+*.token
+setup-consent.json
+cost.jsonl
+notifications.log
+*.run.log
+*.log
+
+# --- API keys / env (keys belong in the Keychain, never in the repo) ---
+.env
+.env.*
+*.pem
+*.key
+
+# --- macOS app build artifacts ---
+fleet/apps/macos/.build/
+fleet/apps/macos/build/
+*.xcuserstate
+DerivedData/
+
+# --- node / build tooling ---
+node_modules/
+npm-debug.log*
+
+# --- OS / editor cruft ---
+.DS_Store
+.uisync*/
+*.append
+*.swp
+.idea/
+.vscode/

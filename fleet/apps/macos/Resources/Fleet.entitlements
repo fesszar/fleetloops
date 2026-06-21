@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hardened-runtime entitlements for Fleet.app.
+     NOT App Sandbox: Fleet must spawn the user's own coding CLIs (codex/claude) and run their
+     project's test commands, which the sandbox forbids. Instead we run with the hardened runtime
+     plus the narrowest set of exceptions, and confine file access to folders the user explicitly
+     granted (security-scoped bookmarks). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Bundled Node + the user's CLIs are JIT/interpreted; allow them under hardened runtime. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- We spawn third-party binaries (node we ship; codex/claude the user installed) that we did
+         not sign, so library validation must be relaxed for child processes. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Outbound network: the engine calls the AI provider the user configured + the loopback UI. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- User-selected folders, persisted across launches as security-scoped bookmarks. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <true/>
+    <!-- Let spawned children inherit our environment + access. -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+</dict>
+</plist>

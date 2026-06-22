@@ -22,6 +22,15 @@ APP="$BUILD/FleetLoops.app"
 NODE_VERSION="${NODE_VERSION:-20.18.1}"          # pin the bundled runtime
 DEVELOPER_ID="${DEVELOPER_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+NOTARY_ARGS=()
+if [ -n "$NOTARY_PROFILE" ]; then
+  NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+elif [ -n "${ASC_KEY_PATH:-}" ] && [ -n "${ASC_KEY_ID:-}" ]; then
+  NOTARY_ARGS=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID")
+  if [ -n "${ASC_ISSUER_ID:-}" ]; then
+    NOTARY_ARGS+=(--issuer "$ASC_ISSUER_ID")
+  fi
+fi
 
 echo "▸ Clean"
 rm -rf "$BUILD"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
@@ -62,12 +71,13 @@ chmod +x "$APP/Contents/Resources/app/node"
 if [ -n "$DEVELOPER_ID" ]; then
   echo "▸ Codesign (inside-out, hardened runtime)"
   SIGN=(codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID")
+  ENTITLEMENTS="$HERE/Resources/Fleet.entitlements"
   # 1) nested binaries first
-  "${SIGN[@]}" "$APP/Contents/Resources/app/node"
+  "${SIGN[@]}" --entitlements "$ENTITLEMENTS" "$APP/Contents/Resources/app/node"
   # 2) the main executable
-  "${SIGN[@]}" "$APP/Contents/MacOS/Fleet"
+  "${SIGN[@]}" --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/Fleet"
   # 3) the app itself, with entitlements
-  "${SIGN[@]}" --entitlements "$HERE/Resources/Fleet.entitlements" "$APP"
+  "${SIGN[@]}" --entitlements "$ENTITLEMENTS" "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
 else
   echo "▸ Ad-hoc sign (local run only — no Developer ID set)"
@@ -75,11 +85,11 @@ else
 fi
 
 # ---- notarize ------------------------------------------------------------------
-if [ -n "$DEVELOPER_ID" ] && [ -n "$NOTARY_PROFILE" ]; then
+if [ -n "$DEVELOPER_ID" ] && [ ${#NOTARY_ARGS[@]} -gt 0 ]; then
   echo "▸ Notarize the app"
   ZIP="$BUILD/FleetLoops.zip"
   ditto -c -k --keepParent "$APP" "$ZIP"
-  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$ZIP" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$APP"
 fi
 
@@ -89,8 +99,8 @@ DMG="$BUILD/FleetLoops.dmg"
 hdiutil create -volname "FleetLoops" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
 if [ -n "$DEVELOPER_ID" ]; then
   codesign --force --sign "$DEVELOPER_ID" "$DMG"
-  if [ -n "$NOTARY_PROFILE" ]; then
-    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  if [ ${#NOTARY_ARGS[@]} -gt 0 ]; then
+    xcrun notarytool submit "$DMG" "${NOTARY_ARGS[@]}" --wait
     xcrun stapler staple "$DMG"
   fi
 fi

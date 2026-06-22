@@ -29,6 +29,7 @@ final class EngineProcess {
         intentionalStop = false
         do {
             let engineDir = try seedEngine()
+            clearBridgeDiscoveryFiles()
             try launch(engineDir: engineDir)
             waitForBridge()
         } catch {
@@ -67,12 +68,34 @@ final class EngineProcess {
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
         let dest = Paths.seedRoot.appendingPathComponent(version, isDirectory: true)
         let marker = dest.appendingPathComponent(".seeded")
-        if !Paths.fm.fileExists(atPath: marker.path) {
+        let signature = seedSignature(for: bundled, version: version)
+        let existingSignature = (try? String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        if existingSignature != signature {
             try? Paths.fm.removeItem(at: dest)
             try Paths.fm.copyItem(at: bundled, to: dest)
-            Paths.fm.createFile(atPath: marker.path, contents: Data())
+            try? signature.data(using: .utf8)?.write(to: marker)
         }
         return dest
+    }
+
+    private func seedSignature(for bundled: URL, version: String) -> String {
+        let bundleVersion = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0"
+        let importantFiles = [
+            "node",
+            "runner/bridge-server.mjs",
+            "runner/onboarding.mjs",
+            "web/app.js",
+            "web/app.css",
+            "config/fleet.default.json"
+        ]
+        let facts = importantFiles.map { relative -> String in
+            let url = bundled.appendingPathComponent(relative)
+            guard let attrs = try? Paths.fm.attributesOfItem(atPath: url.path) else { return "\(relative):missing" }
+            let size = attrs[.size] as? NSNumber
+            let modified = attrs[.modificationDate] as? Date
+            return "\(relative):\(size?.int64Value ?? 0):\(modified?.timeIntervalSince1970 ?? 0)"
+        }
+        return ([version, bundleVersion] + facts).joined(separator: "|")
     }
 
     // MARK: spawning
@@ -111,6 +134,11 @@ final class EngineProcess {
         try p.run()
         process = p
         restartDelay = 1 // reset backoff after a clean start
+    }
+
+    private func clearBridgeDiscoveryFiles() {
+        try? Paths.fm.removeItem(at: Paths.bridgePortFile)
+        try? Paths.fm.removeItem(at: Paths.bridgeTokenFile)
     }
 
     /// Environment for the engine: state/config locations, a usable PATH for background launch,

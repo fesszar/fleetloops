@@ -31,23 +31,41 @@ function versionOf(bin) {
 }
 
 function authProbe(bin) {
-  if (!bin) return { authenticated: false, detail: "not installed" };
-  const candidates = bin === "codex"
-    ? [["auth", "status"], ["login", "status"]]
-    : [["status"], ["auth", "status"]];
-  for (const args of candidates) {
+  if (!bin) return { authenticated: false, usable: false, detail: "not installed" };
+  const unauth = /not\s+(logged|signed)|unauth|login required|no account|not authenticated|no active account/i;
+  const unusable = /credit balance is too low|quota|out of credits|usage limit|billing/i;
+  const commands = bin === "codex"
+    ? [["login", "status"]]
+    : [["auth", "status"], ["login", "status"]];
+  let sawInstalled = false;
+  for (const args of commands) {
     try {
       const r = spawnSync(bin, args, { encoding: "utf8", timeout: 8000 });
       const text = clean(`${r.stdout || ""}\n${r.stderr || ""}`);
-      if (r.status === 0 && !/not\s+(logged|signed)|unauth|login required|no account/i.test(text)) {
-        return { authenticated: true, detail: text.split("\n")[0] || "CLI reports authenticated" };
+      if (!text) continue;
+      sawInstalled = true;
+      if (unauth.test(text)) return { authenticated: false, usable: false, detail: text.split("\n")[0] || "sign in required" };
+      if (bin === "claude" && args.join(" ") === "auth status") {
+        try {
+          const json = JSON.parse(text);
+          if (json.loggedIn === true) {
+            const usableCheck = spawnSync(bin, ["status"], { encoding: "utf8", timeout: 8000 });
+            const usableText = clean(`${usableCheck.stdout || ""}\n${usableCheck.stderr || ""}`);
+            if (unusable.test(usableText)) return { authenticated: true, usable: false, detail: usableText.split("\n")[0] || "signed in, but not usable" };
+            return { authenticated: true, usable: true, detail: json.email ? `Signed in as ${json.email}` : "Signed in" };
+          }
+          if (json.loggedIn === false) return { authenticated: false, usable: false, detail: "sign in required" };
+        } catch {}
       }
-      if (/not\s+(logged|signed)|unauth|login required|no account/i.test(text)) {
-        return { authenticated: false, detail: text.split("\n")[0] || "sign in required" };
+      if (/logged in|signed in|authenticated/i.test(text) && r.status === 0) {
+        return { authenticated: true, usable: true, detail: text.split("\n")[0] || "Signed in" };
       }
+      if (unusable.test(text)) return { authenticated: true, usable: false, detail: text.split("\n")[0] || "signed in, but not usable" };
     } catch {}
   }
-  return { authenticated: true, detail: "installed; sign-in status could not be verified non-interactively" };
+  return sawInstalled
+    ? { authenticated: false, usable: false, detail: "installed; sign-in status could not be verified" }
+    : { authenticated: false, usable: false, detail: "sign in required" };
 }
 
 export function checkCliProvider(providerId) {
@@ -56,7 +74,7 @@ export function checkCliProvider(providerId) {
   if (!p || !bin) return { ok: false, error: "unknown CLI provider" };
   const path = which(bin);
   const installed = !!path;
-  const probe = installed ? authProbe(bin) : { authenticated: false, detail: `install the ${bin} CLI` };
+  const probe = installed ? authProbe(bin) : { authenticated: false, usable: false, detail: `install the ${bin} CLI` };
   return {
     ok: true,
     provider: p.id,
@@ -67,6 +85,8 @@ export function checkCliProvider(providerId) {
     path,
     version: installed ? versionOf(bin) : "",
     authenticated: probe.authenticated,
+    usable: probe.usable === true,
+    connected: installed && probe.authenticated === true && probe.usable === true,
     detail: probe.detail,
   };
 }

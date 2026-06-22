@@ -1,39 +1,43 @@
 // providers/validate.mjs — provider connection status for the Providers screen, and a cheap
 // "does this key work?" check for the moment the user pastes one.
 //
-// Status is intentionally cheap (no network for the list): an agentic CLI is "connected" when its
-// binary is on PATH; an api provider is "connected" when a key is present (env or Keychain); a
-// local provider is assumed reachable. The live key check (validateApiKey) is only run on demand.
+// Agentic CLIs are connected only when the binary is installed, authentication is verified, and
+// the account looks usable. Raw API providers are connected when a key is present (env or
+// Keychain). Local providers are selectable without a key.
 
-import { spawnSync } from "node:child_process";
 import { PROVIDERS, getProvider } from "./registry.mjs";
 import { getApiKey, hasApiKey } from "../secrets.mjs";
+import { checkCliProvider } from "../provider-cli.mjs";
 import * as openaiCodec from "./codec-openai.mjs";
 import * as anthropicCodec from "./codec-anthropic.mjs";
-
-function cliInstalled(bin) {
-  try { return spawnSync("bash", ["-lc", `command -v ${bin}`], { encoding: "utf8" }).status === 0; }
-  catch { return false; }
-}
 
 // One status row per provider for the UI.
 export function listProviderStatus() {
   return Object.values(PROVIDERS).map((p) => {
-    let connected = false, detail = "";
+    let connected = false, detail = "", installed = false, authenticated = false, usable = false, command = "", path = "", version = "", cli = p.cli || "";
     if (p.kind === "agentic-cli") {
-      connected = cliInstalled(p.cli);
-      detail = connected ? "signed in via CLI" : `install the ${p.cli} CLI`;
+      const status = checkCliProvider(p.id);
+      installed = !!status.installed;
+      authenticated = !!status.authenticated;
+      usable = !!status.usable;
+      connected = !!status.connected;
+      detail = status.detail || (installed ? "sign in required" : `install the ${p.cli} CLI`);
+      command = status.command || `${p.cli} login`;
+      cli = status.cli || p.cli || "";
+      path = status.path || "";
+      version = status.version || "";
     } else if (p.auth === "none-local") {
-      connected = true; detail = "local endpoint";
+      connected = true; usable = true; detail = "local endpoint";
     } else {
       connected = hasApiKey(p);
+      usable = connected;
       detail = connected ? "key saved" : "add a key";
     }
     return {
       id: p.id, label: p.label, kind: p.kind, auth: p.auth,
       models: p.models || [], defaultModel: p.defaultModel || "",
       keysUrl: p.keysUrl || "", blurb: p.blurb || "",
-      connected, detail,
+      connected, installed, authenticated, usable, command, path, version, cli, detail,
     };
   });
 }

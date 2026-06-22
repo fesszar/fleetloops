@@ -1002,20 +1002,31 @@ function ProvidersPanel({ flash, embedded = false }) {
   return <><Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />{body}</>;
 }
 function CliCard({ p, flash, reload }) {
-  const login = () => fetch(`${API}/api/provider-cli`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "login" }) })
+  const statusText = providerStatusText(p);
+  const cliName = providerCliName(p);
+  const statusTone = p.connected ? "text-emerald-300" : p.installed ? "text-amber-300" : "text-slate-400";
+  const dotTone = p.connected ? "bg-emerald-400" : p.installed ? "bg-amber-400" : "bg-slate-600";
+  const login = () => {
+    if (!p.installed) {
+      flash(`${p.label} is not installed yet. Install the ${cliName} CLI, then refresh provider status.`);
+      return;
+    }
+    fetch(`${API}/api/provider-cli`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "login" }) })
     .then((r) => r.json()).then((d) => { if (!d.ok) throw new Error(d.error || "login failed"); flash(d.note || `Opened ${d.command}`); reload?.(); })
     .catch((e) => flash(String(e.message || e)));
+  };
   return (
     <div className={`rounded-xl border p-3.5 ${p.connected ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-900"}`}>
       <div className="flex items-center gap-2">
         <Cpu className="w-4 h-4 text-slate-400" />
         <span className="font-medium text-slate-200">{p.label}</span>
-        <span className={`ml-auto inline-flex items-center gap-1 text-[11px] ${p.connected ? "text-emerald-300" : "text-amber-300"}`}><span className={`w-1.5 h-1.5 rounded-full ${p.connected ? "bg-emerald-400" : "bg-amber-400"}`} />{p.connected ? "Connected" : "Not installed"}</span>
+        <span className={`ml-auto inline-flex items-center gap-1 text-[11px] ${statusTone}`}><span className={`w-1.5 h-1.5 rounded-full ${dotTone}`} />{statusText}</span>
       </div>
-      <div className="text-xs text-slate-500 mt-1.5">{p.blurb || p.detail}</div>
-      {!p.connected && <div className="text-xs text-slate-400 mt-1">Install the <span className="font-mono">{p.id === "codex" ? "codex" : "claude"}</span> CLI and sign in, then press refresh.</div>}
+      <div className="text-xs text-slate-500 mt-1.5">{p.detail || p.blurb}</div>
+      {!p.installed && <div className="text-xs text-slate-400 mt-1">Install the <span className="font-mono">{cliName}</span> CLI so FleetLoops can find it on PATH, then press Refresh.</div>}
+      {p.installed && !p.connected && <div className="text-xs text-slate-400 mt-1">Finish sign-in or fix the account status, then press Refresh. FleetLoops will not treat an installed-but-unready CLI as connected.</div>}
       <div className="mt-3 flex gap-2">
-        <button onClick={login} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : "Sign in"}</button>
+        <button onClick={login} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
         <button onClick={reload} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
       </div>
     </div>
@@ -1295,7 +1306,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
 }
 
 function requiredHint(step) {
-  return step === 0 ? "Choose a connected provider"
+  return step === 0 ? "Choose one ready CLI or verified API key"
     : step === 1 ? "Add an existing folder or write a scratch brief"
     : step === 2 ? "Approve the project brain"
     : step === 3 ? "Save at least one gate"
@@ -1321,30 +1332,59 @@ function MigrationPrompt({ onboarding, postJson, pull, flash }) {
 function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, loadProviders, flash }) {
   const clis = providers.filter((p) => p.kind === "agentic-cli");
   const apis = providers.filter((p) => p.kind === "api");
+  const chooseReadyProvider = (p) => {
+    if (p.connected || p.auth === "none-local") chooseProvider(p.id);
+    else if (p.kind === "agentic-cli" && !p.installed) flash(`${p.label} is not installed yet. Install the ${providerCliName(p)} CLI, then refresh.`);
+    else if (p.kind === "agentic-cli") flash(`${p.label} is not ready: ${p.detail || "sign in required"}`);
+    else flash(`${p.label} needs a verified API key first.`);
+  };
   return (
-    <div className="grid lg:grid-cols-[.95fr_1.05fr] gap-4">
-      <Section title="Sign in with a CLI" hint="Codex and Claude Code use your subscription. FleetLoops opens the login command, then you refresh status.">
+    <div className="space-y-4">
+      <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-sm text-indigo-100">
+        Choose exactly one way to run the agent: a signed-in CLI subscription, or a verified API key. You do not need both.
+      </div>
+      <div className="grid lg:grid-cols-[.95fr_1.05fr] gap-4">
+      <Section title="Option A: Sign in with a CLI" hint="Use this when you want FleetLoops to run Codex or Claude Code through the subscription CLI already installed on this Mac.">
         <div className="space-y-2">
-          {clis.map((p) => <PathCard key={p.id} active={providerId === p.id} icon={Cpu} title={p.label} meta={p.connected ? "Connected" : p.detail} good={p.connected} onClick={() => chooseProvider(p.id)}>
+          {clis.map((p) => <PathCard key={p.id} active={providerId === p.id} icon={Cpu} title={p.label} meta={providerStatusText(p)} good={p.connected} onClick={() => chooseReadyProvider(p)}>
+            <div className="text-xs text-slate-500 mt-2">{p.detail || p.blurb}</div>
+            {!p.installed && <div className="text-xs text-amber-300/80 mt-1">Install the CLI first, then refresh this status. FleetLoops cannot continue with a missing command-line tool.</div>}
+            {p.installed && !p.connected && <div className="text-xs text-amber-300/80 mt-1">Finish sign-in or fix the account issue, then refresh. This CLI is not selectable yet.</div>}
             <div className="flex gap-2 mt-3">
-              <button onClick={(e) => { e.stopPropagation(); connectCli(p.id); }} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : "Sign in"}</button>
+              <button onClick={(e) => { e.stopPropagation(); connectCli(p.id); }} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
               <button onClick={(e) => { e.stopPropagation(); loadProviders(); flash("Provider status refreshed"); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
             </div>
           </PathCard>)}
         </div>
       </Section>
-      <Section title="Bring an API key" hint="Keys are verified, then stored in the macOS Keychain. API providers are metered and shown in Cost.">
+      <Section title="Option B: Bring one API key" hint="Use this when you want FleetLoops to call a provider API directly. Keys are verified, then stored in the macOS Keychain.">
         <div className="space-y-2">
           {apis.map((p) => p.auth === "none-local"
-            ? <PathCard key={p.id} active={providerId === p.id} icon={Server} title={p.label} meta="Local endpoint" good onClick={() => chooseProvider(p.id)} />
-            : <div key={p.id} onClick={() => chooseProvider(p.id)} className={`rounded-xl border p-3 cursor-pointer ${providerId === p.id ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-950 hover:border-slate-700"}`}>
+            ? <PathCard key={p.id} active={providerId === p.id} icon={Server} title={p.label} meta="Local endpoint" good onClick={() => chooseReadyProvider(p)} />
+            : <div key={p.id} onClick={() => chooseReadyProvider(p)} className={`rounded-xl border p-3 cursor-pointer ${providerId === p.id ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-950 hover:border-slate-700"}`}>
                 <ApiKeyCard p={p} flash={flash} reload={loadProviders} />
               </div>)}
         </div>
         {selectedProvider && <div className="text-xs text-slate-500 mt-3">Selected: <span className="text-slate-300">{selectedProvider.label}</span> · {selectedProvider.connected || selectedProvider.auth === "none-local" ? "ready" : "connect it before continuing"}</div>}
       </Section>
+      </div>
     </div>
   );
+}
+
+function providerStatusText(p) {
+  if (p.connected) return "Ready";
+  if (p.kind === "agentic-cli" && !p.installed) return "Not installed";
+  if (p.kind === "agentic-cli" && p.authenticated && !p.usable) return "Account issue";
+  if (p.kind === "agentic-cli") return "Sign in required";
+  return p.detail || "Not ready";
+}
+
+function providerCliName(p) {
+  if (p?.cli) return p.cli;
+  if (p?.id === "claude_cli") return "claude";
+  if (p?.id === "codex") return "codex";
+  return String(p?.command || "CLI").split(/\s+/)[0] || "CLI";
 }
 
 function PathCard({ active, icon: Icon, title, meta, good, onClick, children }) {

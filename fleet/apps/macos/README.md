@@ -50,17 +50,17 @@ Shippable, signed, notarized app + dmg:
 export DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="fleet-notary"   # created once via: xcrun notarytool store-credentials
 ./build-app.sh
-# → build/Fleet.app and build/Fleet.dmg
+# → build/FleetLoops.app and build/FleetLoops.dmg
 ```
 
-Without `DEVELOPER_ID` the script still assembles an ad-hoc-signed `Fleet.app` you can run locally (Gatekeeper will warn until it's notarized).
+Without `DEVELOPER_ID` the script still assembles an ad-hoc-signed `FleetLoops.app` you can run locally (Gatekeeper will warn until it's notarized).
 
 ## Status
 
 - **Dashboard is production-wired.** `fleet/web/` builds to a self-contained `app.js` (esbuild + tailwind via `web/build.sh`), and the bridge serves it with the token injected. The WKWebView loads the full dashboard — Overview, Approvals, Trust, **Providers & keys**, **Cost**, Settings, and the project cockpit — with no extra build step. Rebuild the bundle after editing `FleetView.jsx` with `bash fleet/web/build.sh`.
 - **Providers/Keys/Cost screens are live** and call the engine's `/api/providers`, `/api/provider-key`, `/api/cost`, and `/api/setup-consent` endpoints. The native shell already grants folder access (`RepoAccess`) and can inject Keychain keys (`KeychainBridge`).
 - **Add Project is native.** The dashboard calls into Swift, opens the macOS folder picker, then posts the selected repo to `POST /api/project` so newly added projects are persisted through the same config path as the CLI.
-- **Direct distribution is supported.** `build-app.sh` produces `build/Fleet.app` and `build/Fleet.dmg`; the app and DMG have been signed, notarized, stapled, and accepted by Gatekeeper with a Developer ID identity.
+- **Direct distribution is supported.** `build-app.sh` produces `build/FleetLoops.app` and `build/FleetLoops.dmg`; the app and DMG have been signed, notarized, stapled, and accepted by Gatekeeper with a Developer ID identity.
 
 ## Remaining release operations
 

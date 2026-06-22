@@ -14,9 +14,9 @@ import { spawnSync } from "node:child_process";
 import { platform } from "node:os";
 
 // One Keychain service for all provider keys, keyed by provider id as the account. Must match the
-// Swift app's KeychainBridge (service "com.fleet.app.providerkey", account = provider id) so a key
+// Swift app's KeychainBridge (service "com.fleetloops.app.providerkey", account = provider id) so a key
 // saved by either side is readable by both.
-const KEYCHAIN_SERVICE = "com.fleet.app.providerkey";
+const KEYCHAIN_SERVICE = "com.fleetloops.app.providerkey";
 
 function keychainGet(account) {
   if (platform() !== "darwin") return "";

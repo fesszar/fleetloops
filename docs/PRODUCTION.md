@@ -1,7 +1,7 @@
 # Production Release Notes
 
-Fleet currently ships as a direct macOS DMG. The release artifact is produced at
-`fleet/apps/macos/build/Fleet.dmg`.
+FleetLoops currently ships as a direct macOS DMG. The release artifact is produced at
+`fleet/apps/macos/build/FleetLoops.dmg`.
 
 ## Build
 
@@ -22,11 +22,11 @@ staples the DMG.
 
 ```bash
 cd fleet/apps/macos
-codesign --verify --deep --strict --verbose=2 build/Fleet.app
-spctl -a -t exec -vv build/Fleet.app
-stapler validate build/Fleet.app
-stapler validate build/Fleet.dmg
-hdiutil verify build/Fleet.dmg
+codesign --verify --deep --strict --verbose=2 build/FleetLoops.app
+spctl -a -t exec -vv build/FleetLoops.app
+stapler validate build/FleetLoops.app
+stapler validate build/FleetLoops.dmg
+hdiutil verify build/FleetLoops.dmg
 ```
 
 The app should report Gatekeeper acceptance from a Notarized Developer ID

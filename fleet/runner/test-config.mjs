@@ -1,10 +1,12 @@
 // test-config.mjs — provider status, key validation, and cost metering (the Providers/Cost UI backend).
 // Run:  cd fleet/runner && FLEET_STATE_DIR=$(mktemp -d) node test-config.mjs
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { listProviderStatus, validateApiKey } from "./providers/validate.mjs";
+import { checkCliProvider } from "./provider-cli.mjs";
 import { recordCost, costSummary, spendForApp, budgetExceeded, computeUsd } from "./cost.mjs";
 import { applyAppConfigPatch, applyFleetConfigPatch, isWithinQuietHours, publicFleetConfig } from "./config-api.mjs";
 import { addProjectToConfig } from "./project-onboard.mjs";
@@ -14,6 +16,15 @@ const SD = process.env.FLEET_STATE_DIR;
 if (!existsSync(SD)) mkdirSync(SD, { recursive: true });
 const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? "  ok: " : "  FAIL: ") + m); };
+const withPath = (path, fn) => {
+  const old = process.env.PATH;
+  process.env.PATH = path;
+  try { return fn(); } finally { process.env.PATH = old; }
+};
+const writeExecutable = (path, body) => {
+  writeFileSync(path, body);
+  chmodSync(path, 0o755);
+};
 
 // --- provider status list ---------------------------------------------------
 {
@@ -25,6 +36,40 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
   ok(ollama && ollama.connected === true, "local provider reports connected (no key needed)");
   const oaiConnected = rows.find((r) => r.id === "openai").connected;
   ok(typeof oaiConnected === "boolean", "api provider reports a boolean connected state");
+}
+
+// --- CLI readiness ----------------------------------------------------------
+{
+  const fakeBin = mkdtempSync(join(tmpdir(), "fleet-cli-test-"));
+  const basePath = "/bin:/usr/bin";
+  const fakePath = `${fakeBin}:${basePath}`;
+  const missing = withPath(basePath, () => checkCliProvider("codex"));
+  ok(missing.installed === false && missing.connected === false, "missing Codex CLI is not connected");
+
+  writeExecutable(join(fakeBin, "codex"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Not logged in"; exit 1; fi
+exit 1
+`);
+  const unauth = withPath(fakePath, () => checkCliProvider("codex"));
+  ok(unauth.installed === true && unauth.authenticated === false && unauth.connected === false, "installed but signed-out Codex CLI is not connected");
+
+  writeExecutable(join(fakeBin, "codex"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
+exit 1
+`);
+  const ready = withPath(fakePath, () => checkCliProvider("codex"));
+  ok(ready.installed === true && ready.authenticated === true && ready.usable === true && ready.connected === true, "authenticated Codex CLI is connected");
+
+  writeExecutable(join(fakeBin, "claude"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "claude test"; exit 0; fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then printf '%s\\n' '{"loggedIn":true,"email":"qa@example.com"}'; exit 0; fi
+if [ "$1" = "status" ]; then echo "Credit balance is too low"; exit 1; fi
+exit 1
+`);
+  const accountIssue = withPath(fakePath, () => checkCliProvider("claude_cli"));
+  ok(accountIssue.authenticated === true && accountIssue.usable === false && accountIssue.connected === false, "signed-in but unusable Claude CLI is not connected");
 }
 
 // --- key validation (mock fetch) --------------------------------------------
@@ -80,7 +125,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
   const r = addProjectToConfig(cfg, { repo });
   ok(r.ok && cfg.apps.length === 1, "project onboarding writes one app into config");
   ok(cfg.apps[0].stack === "node" && cfg.apps[0].commands.test === "npm test --silent", "project onboarding detects node test/build commands");
-  ok(cfg.apps[0].loop === "running" && cfg.apps[0].vcs === "git", "git projects start runnable");
+  ok(cfg.apps[0].loop === "paused" && cfg.apps[0].vcs === "git", "git projects start paused until brain/gates are approved");
   ok(existsSync(join(repo, ".fleet", "setup.sh")) && existsSync(join(repo, ".fleet", "env.sh")), "git projects get test-environment scaffolding");
   ok(readFileSync(join(repo, ".gitignore"), "utf8").includes(".fleet/test.db"), "gitignore protects Fleet local test artifacts");
   const dup = addProjectToConfig(cfg, { repo });
@@ -124,6 +169,10 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
   ok(publicFleetConfig(cfg.fleet).notifications.desktop === false, "fleet-config stores notification preference");
   ok(isWithinQuietHours(cfg.fleet, new Date("2026-06-22T23:00:00")) && isWithinQuietHours(cfg.fleet, new Date("2026-06-22T06:30:00")), "quiet hours handle overnight windows");
   ok(!isWithinQuietHours(cfg.fleet, new Date("2026-06-22T12:00:00")), "quiet hours allow daytime windows");
+  const f2 = applyFleetConfigPatch(cfg, { routing: { routine: "ollama", standard: "codex", risky: "openai", fallback: ["codex", "anthropic"] }, schedule: { overnightDrain: { enabled: true, start: "22:30", end: "06:30" } }, notifications: { email: true, mobile: true, categories: { needs: true, review: false, stuck: true, cap: true, win: false } } });
+  ok(f2.ok && cfg.fleet.routing.risky === "openai" && cfg.fleet.routing.fallback.length === 2, "fleet-config stores difficulty routing and fallback chain");
+  ok(publicFleetConfig(cfg.fleet).schedule.overnightDrain.enabled === true, "fleet-config stores overnight drain schedule");
+  ok(publicFleetConfig(cfg.fleet).notifications.email === true && publicFleetConfig(cfg.fleet).notifications.categories.review === false, "fleet-config stores notification channels and categories");
 }
 
 console.log(`\nconfig: ${pass} passed, ${fail} failed`);

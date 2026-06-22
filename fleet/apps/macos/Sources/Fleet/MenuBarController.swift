@@ -15,6 +15,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onAddProject: (() -> Void)?
     var onTogglePause: (() -> Void)?
     var onOpenProviders: (() -> Void)?
+    var onRestartOnboarding: (() -> Void)?
     var onQuit: (() -> Void)?
 
     override init() {
@@ -64,12 +65,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         add("Open Dashboard", #selector(openDashboard), key: "o")
-        add(lastStatus.paused ? "Resume Fleet" : "Pause Fleet", #selector(togglePause), key: "")
+        add(lastStatus.paused ? "Resume FleetLoops" : "Pause FleetLoops", #selector(togglePause), key: "")
         menu.addItem(.separator())
         add("Add Project…", #selector(addProject), key: "n")
         add("Providers & Keys…", #selector(openProviders), key: "")
+        add("Restart Onboarding…", #selector(restartOnboarding), key: "")
         menu.addItem(.separator())
-        add("Quit Fleet", #selector(quit), key: "q")
+        add("Quit FleetLoops", #selector(quit), key: "q")
     }
 
     private func add(_ title: String, _ sel: Selector, key: String) {
@@ -82,6 +84,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func addProject() { onAddProject?() }
     @objc private func togglePause() { onTogglePause?() }
     @objc private func openProviders() { onOpenProviders?() }
+    @objc private func restartOnboarding() { onRestartOnboarding?() }
     @objc private func quit() { onQuit?() }
 
     // MARK: glyph drawing

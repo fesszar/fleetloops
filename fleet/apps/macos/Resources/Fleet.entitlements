@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Hardened-runtime entitlements for Fleet.app.
+<!-- Hardened-runtime entitlements for FleetLoops.app.
      NOT App Sandbox: Fleet must spawn the user's own coding CLIs (codex/claude) and run their
      project's test commands, which the sandbox forbids. Instead we run with the hardened runtime
      plus the narrowest set of exceptions, and confine file access to folders the user explicitly

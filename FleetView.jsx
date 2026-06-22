@@ -6,7 +6,7 @@ import {
   Search, GitMerge, Rocket, Wifi, WifiOff, RefreshCw, Lock, Brain, PlugZap, BookText,
   Bell, BellOff, FileDiff, Trophy, ShieldCheck,
   Key, Wallet, Cpu, ExternalLink, Route, SlidersHorizontal, CalendarClock, BellRing, Gauge,
-  Server, Check, X, CircleCheck,
+  Server, Check, X, CircleCheck, FolderOpen, Paperclip, WandSparkles,
 } from "lucide-react";
 
 let _audio;
@@ -39,6 +39,7 @@ const c = {
   text: "#EAF0FB", sub: "#AAB6CC", muted: "#8693AB", brand: "#5B6CFF", brandDeep: "#4C5AE0",
   working: "#5CC8FF", needs: "#FFC34D", done: "#54E0A6", idle: "#9BA8BE", gold: "#FFCE73", err: "#FF8A9B",
 };
+const ONBOARDING_STEPS = ["Connect", "Add project", "Understand", "Define done", "Launch"];
 const font = {
   display: '"Space Grotesk", "Inter", system-ui, sans-serif',
   body: '"IBM Plex Sans", Inter, system-ui, sans-serif',
@@ -262,6 +263,8 @@ export default function FleetView() {
   const [apps, setApps] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [milestones, setMilestones] = useState([]);
+  const [onboarding, setOnboarding] = useState(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [fleetPause, setFleetPause] = useState(null);
   const [fleetConfig, setFleetConfig] = useState(null);
   const [lastPass, setLastPass] = useState(null);
@@ -309,6 +312,8 @@ export default function FleetView() {
       setApps(data.apps || []);
       setApprovals(data.approvals || []);
       setMilestones(data.milestones || []);
+      setOnboarding(data.onboarding || null);
+      if (data.onboarding && data.onboarding.completed === false) setOnboardingOpen(true);
       setFleetConfig(data.fleet || null);
       setFleetPause(data.fleetPause || null);
       setLastPass(data.lastPass || null);
@@ -317,7 +322,12 @@ export default function FleetView() {
     } catch { setConnected(false); }
   }, []);
   useEffect(() => { pull(); const t = setInterval(pull, 6000); return () => clearInterval(t); }, [pull]);
-  const post = (path, body) => fetch(`${API}/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(pull).catch(() => {});
+  const postJson = (path, body) => fetch(`${API}/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.ok === false) throw new Error(data.error || data.note || `Request failed (${r.status})`);
+    return data;
+  });
+  const post = (path, body) => postJson(path, body).then(pull).catch((e) => flash(String(e.message || e)));
 
   const stats = useMemo(() => ({
     running: apps.filter((a) => a.loop === "running").length,
@@ -376,8 +386,8 @@ export default function FleetView() {
             {["#FF5F57", "#FEBC2E", "#28C840"].map((x) => <span key={x} className="w-3 h-3 rounded-full" style={{ background: x }} />)}
           </div>
           <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-950/40"><Bot className="w-5 h-5 text-white" /></div>
-          <div><div className="font-display font-bold tracking-tight text-[17px]">FleetView</div><div className="font-mono text-[10px] text-slate-500">{apps.length} APPS</div></div>
+          <Boxesish />
+          <div><div className="font-display font-bold tracking-tight text-[17px]">FleetLoops</div><div className="font-mono text-[10px] text-slate-500">{apps.length} APPS</div></div>
           <button onClick={toggleSound} title={soundOn ? "Approval sounds on — click to mute" : "Muted — click to enable sounds + alerts"} className="ml-auto text-slate-400 hover:text-slate-200">{soundOn ? <Bell className="w-4 h-4 text-indigo-400" /> : <BellOff className="w-4 h-4" />}</button>
           <span title={connected ? "Live" : "Reconnecting"}>{connected ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-amber-500" />}</span>
           </div>
@@ -405,12 +415,13 @@ export default function FleetView() {
           <button onClick={runAll} className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500"><Play className="w-3.5 h-3.5" /> Run all</button>
           <button onClick={pauseAll} className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"><Pause className="w-3.5 h-3.5" /> Pause all</button>
         </div>
+        <div className="px-3 pb-3">
+          <button onClick={() => { postJson("onboarding", { action: "reset" }).then((d) => { setOnboarding(d.onboarding); setOnboardingOpen(true); pull(); }).catch((e) => flash(String(e.message || e))); }} className="w-full text-[11px] text-slate-500 hover:text-slate-300 text-left">Restart onboarding…</button>
+        </div>
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col">
-        {view === "overview" && connected && apps.length === 0
-          ? <Onboarding onProviders={() => setView("providers")} onAddProject={addProjectFromNative} />
-          : view === "overview" && <Overview stats={stats} apps={filtered} onToggle={toggleLoop} onOpen={openApp} connected={connected} updatedAt={updatedAt} onRefresh={pull} post={post} fleetPause={fleetPause} lastPass={lastPass} current={current} milestones={milestones} onGoApprovals={() => setView("approvals")} onResume={() => { post("loop", { slug: "*", action: "resume" }); flash("Resumed — the fleet picks up on the next tick"); }} />}
+        {view === "overview" && <Overview stats={stats} apps={filtered} onToggle={toggleLoop} onOpen={openApp} connected={connected} updatedAt={updatedAt} onRefresh={pull} post={post} fleetPause={fleetPause} lastPass={lastPass} current={current} milestones={milestones} onGoApprovals={() => setView("approvals")} onResume={() => { post("loop", { slug: "*", action: "resume" }); flash("Resumed — the fleet picks up on the next tick"); }} onboardingIncomplete={onboarding && onboarding.completed === false} onOpenOnboarding={() => setOnboardingOpen(true)} />}
         {view === "approvals" && <Approvals approvals={approvals} apps={apps} onResolve={resolveApproval} onOpen={openApp} />}
         {view === "trust" && <TrustPanel flash={flash} />}
         {view === "providers" && <SettingsPanel apps={apps} fleet={fleetConfig} flash={flash} pull={pull} setFleetConfig={setFleetConfig} />}
@@ -418,9 +429,31 @@ export default function FleetView() {
       </main>
 
       {activeApp && <AppDrawer app={activeApp} tab={appTab} setTab={setAppTab} post={post} onClose={() => setActiveAppId(null)} onToggle={toggleLoop} onStop={() => { post("loop", { slug: activeApp.id, action: "stop" }); flash(`${activeApp.name}: stopped`); }} onAddTask={addTask} onDeleteTask={deleteTask} onUpdateTask={updateTask} onMoveTask={moveTask} />}
+      {onboardingOpen && onboarding && onboarding.completed === false && (
+        <OnboardingModal
+          onboarding={onboarding}
+          apps={apps}
+          postJson={postJson}
+          pull={pull}
+          flash={flash}
+          onClose={() => setOnboardingOpen(false)}
+          onDone={() => { setOnboardingOpen(false); setView("overview"); pull(); }}
+        />
+      )}
       {toast && <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-white text-slate-900 text-sm px-4 py-2 rounded-lg shadow-lg z-50 font-medium">{toast}</div>}
     </div>
   );
+}
+
+function Boxesish() {
+  return <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-950/40" aria-hidden="true">
+    <div className="grid grid-cols-2 gap-0.5">
+      <span className="w-2.5 h-2.5 rounded-[3px] bg-white/95" />
+      <span className="w-2.5 h-2.5 rounded-[3px] bg-white/65" />
+      <span className="w-2.5 h-2.5 rounded-[3px] bg-white/65" />
+      <span className="w-2.5 h-2.5 rounded-[3px] border border-white/90 relative"><span className="absolute left-1/2 top-0.5 bottom-0.5 w-px bg-white/90 -translate-x-1/2" /><span className="absolute top-1/2 left-0.5 right-0.5 h-px bg-white/90 -translate-y-1/2" /></span>
+    </div>
+  </div>;
 }
 
 function Connecting() {
@@ -444,7 +477,7 @@ function SideItem({ active, onClick, icon: Icon, label, badge }) {
   return <button onClick={onClick} className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "night-active text-indigo-300 font-medium" : "hover:bg-slate-800 text-slate-300"}`}><Icon className="w-4 h-4" /><span>{label}</span>{badge > 0 && <span className="ml-auto text-[11px] bg-rose-500 text-white rounded-full px-1.5 py-0.5">{badge}</span>}</button>;
 }
 
-function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefresh, post, fleetPause, lastPass, current, milestones, onGoApprovals, onResume }) {
+function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefresh, post, fleetPause, lastPass, current, milestones, onGoApprovals, onResume, onboardingIncomplete, onOpenOnboarding }) {
   // HEARTBEAT v2: per-app completions, plus what the tick is doing right now. A single app's
   // real agent run can take an hour — that's "working", not "stalled". Alarm ONLY when nothing
   // has completed recently AND nothing is in flight (or one app has hogged >95 min).
@@ -461,7 +494,17 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
           <LiveTag connected={connected} updatedAt={updatedAt} onRefresh={onRefresh} />
         </div>
       } />
-      <div className="p-6 overflow-y-auto">
+      <div className="p-4 sm:p-6 overflow-y-auto">
+        {onboardingIncomplete && (
+          <div className="mb-4 flex items-start gap-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 p-3.5" role="status">
+            <WandSparkles className="w-5 h-5 text-indigo-300 shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm">
+              <div className="font-semibold text-indigo-100">Finish first-run setup before live work starts</div>
+              <div className="text-indigo-100/75 mt-0.5">Connect an agent, add or create a project, approve its brain, define done gates, then launch.</div>
+            </div>
+            <button onClick={onOpenOnboarding} className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-500 text-white hover:bg-indigo-400">Open setup</button>
+          </div>
+        )}
         {(stalled || hogging) && !fleetPause && (
           <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5" role="alert">
             <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -487,7 +530,7 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
           <Stat icon={ShieldCheck} label="Definition-of-done gates" sub="proven ready, fleet-wide" value={stats.gatesTotal ? `${stats.gatesMet}/${stats.gatesTotal}` : "—"} tone="text-emerald-400" />
           <Stat icon={ListChecks} label="Tasks completed" sub="of everything planned so far" value={`${stats.doneTasks}/${stats.totalTasks}`} tone="text-indigo-400" />
         </div>
-        {apps.length === 0 ? <div className="text-slate-500 text-sm py-16 text-center">No apps match.</div> : (
+        {apps.length === 0 ? <EmptyPanel icon={FolderGit2} title="No projects in FleetLoops yet" body={onboardingIncomplete ? "Use the setup flow to connect an agent and add your first project. The dashboard stays empty until a real project is persisted." : "Add a real project to start the loop. FleetLoops does not show demo apps."} /> : (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
             {apps.map((a) => {
               const total = a.tasks.length, done = a.tasks.filter((t) => t.status === "done").length;
@@ -690,7 +733,7 @@ function SettingsPanel({ apps, fleet, flash, pull, setFleetConfig }) {
           {tabs.map((t) => <Tab key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} icon={t.icon} label={t.label} />)}
         </div>
         {tab === "agents" && <ProvidersPanel flash={flash} embedded />}
-        {tab === "routing" && <RoutingSettings apps={apps} flash={flash} pull={pull} />}
+        {tab === "routing" && <RoutingSettings apps={apps} fleet={fleet} flash={flash} pull={pull} setFleetConfig={setFleetConfig} />}
         {tab === "limits" && <FleetLimits fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
         {tab === "schedule" && <FleetSchedule fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
         {tab === "notifications" && <FleetNotifications fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
@@ -711,10 +754,12 @@ function saveFleetConfig(patch, flash, setFleetConfig) {
     .catch((e) => { flash(String(e.message || e)); throw e; });
 }
 
-function RoutingSettings({ apps, flash, pull }) {
+function RoutingSettings({ apps, fleet, flash, pull, setFleetConfig }) {
   const [providers, setProviders] = useState(null);
   const [draft, setDraft] = useState({});
+  const [fleetRoute, setFleetRoute] = useState(fleet?.routing || { routine: "ollama", standard: "codex", risky: "openai", fallback: ["codex", "openai", "anthropic"] });
   useEffect(() => { fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])); }, []);
+  useEffect(() => { if (fleet?.routing) setFleetRoute(fleet.routing); }, [fleet]);
   useEffect(() => {
     const next = {};
     for (const app of apps) next[app.id] = {
@@ -729,6 +774,7 @@ function RoutingSettings({ apps, flash, pull }) {
   if (!providers) return <div className="p-10 text-slate-500">Loading routing…</div>;
   const providerById = Object.fromEntries(providers.map((p) => [p.id, p]));
   const update = (id, patch) => setDraft((d) => ({ ...d, [id]: { ...(d[id] || {}), ...patch } }));
+  const saveFleetRouting = () => saveFleetConfig({ routing: fleetRoute }, flash, setFleetConfig);
   const save = (app) => {
     const d = draft[app.id] || {};
     return fetch(`${API}/api/app-config`, {
@@ -743,6 +789,23 @@ function RoutingSettings({ apps, flash, pull }) {
   };
   return (
     <div className="space-y-3">
+      <Section title="Route by difficulty" hint="Routine gates can use a cheap/local provider; risky work gets the strongest provider. Fallback chain is used when a provider is unavailable.">
+        <div className="grid md:grid-cols-3 gap-3">
+          {[
+            ["routine", "Routine gates"],
+            ["standard", "Standard work"],
+            ["risky", "Hard / risky"],
+          ].map(([key, label]) => <label key={key} className="text-xs text-slate-500">{label}
+            <select value={fleetRoute[key] || ""} onChange={(e) => setFleetRoute((r) => ({ ...r, [key]: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
+              {providers.map((p) => <option key={p.id} value={p.id}>{p.label}{p.connected || p.auth === "none-local" ? "" : " (not connected)"}</option>)}
+            </select>
+          </label>)}
+        </div>
+        <label className="block text-xs text-slate-500 mt-3">Fallback chain
+          <input value={(fleetRoute.fallback || []).join(", ")} onChange={(e) => setFleetRoute((r) => ({ ...r, fallback: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm font-mono" />
+        </label>
+        <button onClick={saveFleetRouting} className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save difficulty routing</button>
+      </Section>
       {apps.length === 0 && <EmptyPanel icon={Route} title="No apps to route yet" body="Add a project from the macOS menu bar first. Routing appears here as soon as the bridge has a real app config." />}
       {apps.map((app) => {
         const d = draft[app.id] || {};
@@ -806,17 +869,18 @@ function FleetLimits({ fleet, flash, setFleetConfig }) {
   const save = () => saveFleetConfig(draft, flash, setFleetConfig);
   return (
     <div className="grid lg:grid-cols-2 gap-4">
-      <Section title="Scheduler capacity" hint="Saved immediately. Interval and concurrency are read when the bridge scheduler starts, so restart Fleet for those two to take effect.">
-        <div className="grid grid-cols-3 gap-3">
-          <NumberField label="Minutes" value={draft.intervalMinutes} onChange={(v) => patch({ intervalMinutes: v })} min="1" />
-          <NumberField label="Concurrent apps" value={draft.maxConcurrentLoops} onChange={(v) => patch({ maxConcurrentLoops: v })} min="1" />
-          <NumberField label="Max hours" value={draft.maxUnattendedHours} onChange={(v) => patch({ maxUnattendedHours: v })} min="1" />
+      <Section title="Parallel app limit" hint="How many apps can work at the same time. Scheduler restart applies this value.">
+        <RangeField label="Concurrent apps" value={draft.maxConcurrentLoops || 3} min="1" max="12" onChange={(v) => patch({ maxConcurrentLoops: Number(v) })} />
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <NumberField label="Sweep minutes" value={draft.intervalMinutes} onChange={(v) => patch({ intervalMinutes: v })} min="1" />
+          <NumberField label="Max unattended hours" value={draft.maxUnattendedHours} onChange={(v) => patch({ maxUnattendedHours: v })} min="1" />
         </div>
       </Section>
       <Section title="Fleet API spend cap" hint="Raw-API providers only. Live scheduled work pauses when the cap is reached; CLI subscriptions are not metered here.">
-        <div className="grid grid-cols-2 gap-3">
-          <NumberField label="Daily USD" value={draft.budget?.dailyUsd || ""} onChange={(v) => patch({ budget: { ...(draft.budget || {}), dailyUsd: v } })} min="0" step="0.01" />
-          <NumberField label="Monthly USD" value={draft.budget?.monthlyUsd || ""} onChange={(v) => patch({ budget: { ...(draft.budget || {}), monthlyUsd: v } })} min="0" step="0.01" />
+        <RangeField label="Daily USD cap" value={draft.budget?.dailyUsd || 0} min="0" max="500" onChange={(v) => patch({ budget: { ...(draft.budget || {}), dailyUsd: Number(v) } })} suffix="$" />
+        <RangeField label="Warn early" value={draft.budget?.alertPct || 80} min="10" max="100" onChange={(v) => patch({ budget: { ...(draft.budget || {}), alertPct: Number(v) } })} suffix="%" />
+        <div className="mt-3">
+          <NumberField label="Monthly USD cap" value={draft.budget?.monthlyUsd || ""} onChange={(v) => patch({ budget: { ...(draft.budget || {}), monthlyUsd: v } })} min="0" step="0.01" />
         </div>
       </Section>
       <div className="lg:col-span-2"><button onClick={save} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save limits</button></div>
@@ -824,12 +888,27 @@ function FleetLimits({ fleet, flash, setFleetConfig }) {
   );
 }
 
+function RangeField({ label, value, min, max, onChange, suffix = "" }) {
+  return <label className="block text-xs text-slate-500">{label}<div className="mt-1 flex items-center gap-3"><input type="range" min={min} max={max} value={value ?? 0} onChange={(e) => onChange(e.target.value)} className="flex-1" /><span className="font-mono text-sm text-slate-200 min-w-12 text-right">{suffix === "$" ? `$${value || 0}` : `${value || 0}${suffix}`}</span></div></label>;
+}
+
 function FleetSchedule({ fleet, flash, setFleetConfig }) {
   const [quiet, setQuiet] = useState(fleet?.quietHours || { enabled: false, start: "22:00", end: "07:00" });
-  useEffect(() => { if (fleet?.quietHours) setQuiet(fleet.quietHours); }, [fleet]);
-  const save = () => saveFleetConfig({ quietHours: quiet }, flash, setFleetConfig);
+  const [drain, setDrain] = useState(fleet?.schedule?.overnightDrain || { enabled: false, start: "22:30", end: "06:30" });
+  useEffect(() => { if (fleet?.quietHours) setQuiet(fleet.quietHours); if (fleet?.schedule?.overnightDrain) setDrain(fleet.schedule.overnightDrain); }, [fleet]);
+  const save = () => saveFleetConfig({ quietHours: quiet, schedule: { overnightDrain: drain } }, flash, setFleetConfig);
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-3xl space-y-4">
+      <Section title="Drain backlog overnight" hint="When enabled, scheduled live sweeps run only inside this local-time window. Manual Run buttons still work.">
+        <div className="flex items-center justify-between gap-4">
+          <div><div className="text-sm font-medium text-slate-100">Overnight backlog drain</div><div className="text-xs text-slate-500 mt-0.5">Use this when you want the fleet to work after hours and review in the morning.</div></div>
+          <ToggleSwitch on={drain.enabled} onClick={() => setDrain((q) => ({ ...q, enabled: !q.enabled }))} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <label className="text-xs text-slate-500">Start<input type="time" value={drain.start} onChange={(e) => setDrain((q) => ({ ...q, start: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
+          <label className="text-xs text-slate-500">End<input type="time" value={drain.end} onChange={(e) => setDrain((q) => ({ ...q, end: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
+        </div>
+      </Section>
       <Section title="Quiet hours" hint="When enabled, the bridge skips scheduled sweeps during this local-time window. Manual Run buttons still work.">
         <div className="flex items-center justify-between gap-4">
           <div><div className="text-sm font-medium text-slate-100">Skip scheduled loops overnight</div><div className="text-xs text-slate-500 mt-0.5">Use this when you want morning review batches without unattended overnight changes.</div></div>
@@ -839,23 +918,37 @@ function FleetSchedule({ fleet, flash, setFleetConfig }) {
           <label className="text-xs text-slate-500">Start<input type="time" value={quiet.start} onChange={(e) => setQuiet((q) => ({ ...q, start: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
           <label className="text-xs text-slate-500">End<input type="time" value={quiet.end} onChange={(e) => setQuiet((q) => ({ ...q, end: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
         </div>
-        <button onClick={save} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save schedule</button>
       </Section>
+      <button onClick={save} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save schedule</button>
     </div>
   );
 }
 
 function FleetNotifications({ fleet, flash, setFleetConfig }) {
-  const [draft, setDraft] = useState(fleet?.notifications || { desktop: true, webhook: "" });
+  const [draft, setDraft] = useState(fleet?.notifications || { desktop: true, email: false, mobile: false, webhook: "", categories: { needs: true, review: true, stuck: true, cap: true, win: true } });
   useEffect(() => { if (fleet?.notifications) setDraft(fleet.notifications); }, [fleet]);
   const save = () => saveFleetConfig({ notifications: draft }, flash, setFleetConfig);
+  const cats = [
+    ["needs", "Needs decision"],
+    ["review", "Review ready"],
+    ["stuck", "Stuck"],
+    ["cap", "Spend threshold"],
+    ["win", "Graduated / win"],
+  ];
+  const setCat = (key) => setDraft((d) => ({ ...d, categories: { ...(d.categories || {}), [key]: !(d.categories || {})[key] } }));
   return (
-    <div className="max-w-2xl space-y-4">
-      <Section title="Desktop alerts" hint="Used for spend caps, auth pauses, and work that needs human attention.">
-        <div className="flex items-center justify-between">
-          <div><div className="text-sm font-medium">macOS notifications</div><div className="text-xs text-slate-500 mt-0.5">The bridge also writes notifications.log so alerts are not lost.</div></div>
-          <ToggleSwitch on={draft.desktop !== false} onClick={() => setDraft((d) => ({ ...d, desktop: d.desktop === false }))} />
+    <div className="max-w-3xl space-y-4">
+      <Section title="Channels" hint="Desktop is live today. Email and mobile preferences are persisted for integrations without faking delivery.">
+        <div className="grid sm:grid-cols-3 gap-3">
+          {[
+            ["desktop", "Desktop"],
+            ["email", "Email"],
+            ["mobile", "Mobile"],
+          ].map(([key, label]) => <div key={key} className="rounded-lg border border-slate-800 bg-slate-950 p-3 flex items-center justify-between"><span className="text-sm text-slate-200">{label}</span><ToggleSwitch on={key === "desktop" ? draft.desktop !== false : !!draft[key]} onClick={() => setDraft((d) => ({ ...d, [key]: key === "desktop" ? d.desktop === false : !d[key] }))} /></div>)}
         </div>
+      </Section>
+      <Section title="Events" hint="Choose which events should notify you. Color is always paired with an event name and icon in the app.">
+        <div className="space-y-2">{cats.map(([key, label]) => <div key={key} className="rounded-lg border border-slate-800 bg-slate-950 p-3 flex items-center justify-between"><span className="text-sm text-slate-200">{label}</span><ToggleSwitch on={(draft.categories || {})[key] !== false} onClick={() => setCat(key)} /></div>)}</div>
       </Section>
       <Section title="Webhook" hint="Optional. If set, the runner posts notification JSON to this URL.">
         <input value={draft.webhook || ""} onChange={(e) => setDraft((d) => ({ ...d, webhook: e.target.value }))} placeholder="https://…" className="w-full rounded-lg px-2.5 py-2 text-sm" />
@@ -870,7 +963,7 @@ function NumberField({ label, value, onChange, ...props }) {
 }
 
 function ToggleSwitch({ on, onClick }) {
-  return <button type="button" onClick={onClick} className={`relative w-11 h-6 rounded-full border transition-colors ${on ? "bg-indigo-600 border-indigo-500" : "bg-slate-800 border-slate-700"}`} aria-pressed={on}><span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`} /></button>;
+  return <button type="button" role="switch" aria-checked={!!on} onClick={onClick} className={`relative w-11 h-6 rounded-full border transition-colors ${on ? "bg-indigo-600 border-indigo-500" : "bg-slate-800 border-slate-700"}`}><span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`} /></button>;
 }
 
 function EmptyPanel({ icon: Icon, title, body }) {
@@ -896,7 +989,7 @@ function ProvidersPanel({ flash, embedded = false }) {
         {pending.length > 0 && <SetupConsent pending={pending} flash={flash} reload={load} />}
         <div>
           <div className="text-sm font-semibold text-slate-300 mb-2">Coding agents (sign in with the CLI)</div>
-          <div className="grid sm:grid-cols-2 gap-3">{clis.map((p) => <CliCard key={p.id} p={p} />)}</div>
+          <div className="grid sm:grid-cols-2 gap-3">{clis.map((p) => <CliCard key={p.id} p={p} flash={flash} reload={load} />)}</div>
         </div>
         <div>
           <div className="text-sm font-semibold text-slate-300 mb-1">Bring your own API key</div>
@@ -908,16 +1001,34 @@ function ProvidersPanel({ flash, embedded = false }) {
   if (embedded) return body;
   return <><Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />{body}</>;
 }
-function CliCard({ p }) {
+function CliCard({ p, flash, reload }) {
+  const statusText = providerStatusText(p);
+  const cliName = providerCliName(p);
+  const statusTone = p.connected ? "text-emerald-300" : p.installed ? "text-amber-300" : "text-slate-400";
+  const dotTone = p.connected ? "bg-emerald-400" : p.installed ? "bg-amber-400" : "bg-slate-600";
+  const login = () => {
+    if (!p.installed) {
+      flash(`${p.label} is not installed yet. Install the ${cliName} CLI, then refresh provider status.`);
+      return;
+    }
+    fetch(`${API}/api/provider-cli`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "login" }) })
+    .then((r) => r.json()).then((d) => { if (!d.ok) throw new Error(d.error || "login failed"); flash(d.note || `Opened ${d.command}`); reload?.(); })
+    .catch((e) => flash(String(e.message || e)));
+  };
   return (
     <div className={`rounded-xl border p-3.5 ${p.connected ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-900"}`}>
       <div className="flex items-center gap-2">
         <Cpu className="w-4 h-4 text-slate-400" />
         <span className="font-medium text-slate-200">{p.label}</span>
-        <span className={`ml-auto inline-flex items-center gap-1 text-[11px] ${p.connected ? "text-emerald-300" : "text-amber-300"}`}><span className={`w-1.5 h-1.5 rounded-full ${p.connected ? "bg-emerald-400" : "bg-amber-400"}`} />{p.connected ? "Connected" : "Not installed"}</span>
+        <span className={`ml-auto inline-flex items-center gap-1 text-[11px] ${statusTone}`}><span className={`w-1.5 h-1.5 rounded-full ${dotTone}`} />{statusText}</span>
       </div>
-      <div className="text-xs text-slate-500 mt-1.5">{p.blurb || p.detail}</div>
-      {!p.connected && <div className="text-xs text-slate-400 mt-1">Install the <span className="font-mono">{p.id === "codex" ? "codex" : "claude"}</span> CLI and sign in, then press refresh.</div>}
+      <div className="text-xs text-slate-500 mt-1.5">{p.detail || p.blurb}</div>
+      {!p.installed && <div className="text-xs text-slate-400 mt-1">Install the <span className="font-mono">{cliName}</span> CLI so FleetLoops can find it on PATH, then press Refresh.</div>}
+      {p.installed && !p.connected && <div className="text-xs text-slate-400 mt-1">Finish sign-in or fix the account status, then press Refresh. FleetLoops will not treat an installed-but-unready CLI as connected.</div>}
+      <div className="mt-3 flex gap-2">
+        <button onClick={login} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
+        <button onClick={reload} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+      </div>
     </div>
   );
 }
@@ -943,7 +1054,10 @@ function ApiKeyCard({ p, flash, reload }) {
         else setMsg({ ok: false, text: d.error || "That key didn't work — check for a typo or make a new one." });
       }).catch(() => setMsg({ ok: false, text: "Couldn't reach the service." })).finally(() => setBusy(false));
   };
-  const remove = () => fetch(`${API}/api/provider-key`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "delete" }) }).then(() => { flash(`${p.label} key removed`); reload(); });
+  const remove = () => {
+    if (typeof window !== "undefined" && !window.confirm(`Remove the saved ${p.label} key from Keychain?`)) return;
+    fetch(`${API}/api/provider-key`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "delete" }) }).then(() => { flash(`${p.label} key removed`); reload(); });
+  };
   return (
     <div className={`rounded-xl border p-3.5 ${p.connected ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-900"}`}>
       <div className="flex items-center gap-2">
@@ -1024,52 +1138,417 @@ function CostPanel() {
   );
 }
 
-// ONBOARDING — the first-run welcome shown when no projects exist yet. Two honest steps:
-// connect a coding agent (live status from /api/providers), then add your first project through
-// the native folder picker. Keeps the show-real-state law.
-function Onboarding({ onProviders, onAddProject }) {
-  const [providers, setProviders] = useState(null);
-  useEffect(() => { fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])); }, []);
-  const anyAgent = (providers || []).some((p) => p.connected);
+function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onDone }) {
+  const [step, setStep] = useState(Math.max(0, Math.min(4, onboarding.step || 0)));
+  const [providers, setProviders] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [providerId, setProviderId] = useState(onboarding.providerId || "");
+  const [mode, setMode] = useState(onboarding.mode || "code");
+  const [repoPath, setRepoPath] = useState(onboarding.projectDraft?.repo || "");
+  const [projectName, setProjectName] = useState(onboarding.projectDraft?.name || "");
+  const [scratchName, setScratchName] = useState(onboarding.projectDraft?.name || "New FleetLoops App");
+  const [scratchBrief, setScratchBrief] = useState(onboarding.projectDraft?.brief || "");
+  const [workspace, setWorkspace] = useState(onboarding.projectDraft?.workspace || "~/FleetLoops Projects");
+  const [documents, setDocuments] = useState(onboarding.projectDraft?.documents || []);
+  const [appId, setAppId] = useState(onboarding.appId || "");
+  const [understanding, setUnderstanding] = useState(null);
+  const [brainText, setBrainText] = useState("");
+  const [brainApproved, setBrainApproved] = useState(!!onboarding.brainApproved);
+  const [gates, setGates] = useState([]);
+  const [gatesSaved, setGatesSaved] = useState(!!onboarding.gatesApproved);
+  const [mergePolicy, setMergePolicy] = useState(onboarding.mergePolicy || "approve");
+  const [shipPolicy, setShipPolicy] = useState(onboarding.shipPolicy || "manual");
+  const activeApp = apps.find((a) => a.id === appId) || null;
+
+  const loadProviders = useCallback(() => fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])), []);
+  useEffect(() => { loadProviders(); }, [loadProviders]);
+  useEffect(() => { setStep(Math.max(0, Math.min(4, onboarding.step || 0))); }, [onboarding.step]);
+  useEffect(() => {
+    const oldProject = window.fleetNativeProjectPicked;
+    const oldDocs = window.fleetNativeDocumentsPicked;
+    window.fleetNativeProjectPicked = (path) => { if (path) setRepoPath(path); };
+    window.fleetNativeDocumentsPicked = (paths) => { if (Array.isArray(paths)) setDocuments((d) => [...d, ...paths.map((p) => ({ path: p }))]); };
+    return () => { window.fleetNativeProjectPicked = oldProject; window.fleetNativeDocumentsPicked = oldDocs; };
+  }, []);
+
+  const selectedProvider = providers.find((p) => p.id === providerId) || null;
+  const providerReady = !!selectedProvider && (selectedProvider.connected || selectedProvider.auth === "none-local");
+  const canContinue = step === 0 ? providerReady
+    : step === 1 ? !!appId || (mode === "code" ? !!repoPath.trim() : scratchBrief.trim().length >= 20 && !!workspace.trim())
+    : step === 2 ? brainApproved
+    : step === 3 ? gatesSaved
+    : true;
+  const run = async (fn) => {
+    setBusy(true); setError("");
+    try { return await fn(); }
+    catch (e) { const msg = String(e.message || e); setError(msg); flash(msg); return null; }
+    finally { setBusy(false); }
+  };
+  const saveStep = async (next) => {
+    setStep(next);
+    const d = await postJson("onboarding", { action: "save-step", step: next });
+    if (d.onboarding) pull();
+  };
+  const pickProject = () => {
+    const handler = window.webkit?.messageHandlers?.fleetPickProject || window.webkit?.messageHandlers?.fleetAddProject;
+    if (handler) handler.postMessage({ onboarding: true });
+    else flash("Paste the absolute project folder path below.");
+  };
+  const pickDocuments = () => {
+    const handler = window.webkit?.messageHandlers?.fleetPickDocuments;
+    if (handler) handler.postMessage({});
+    else flash("Native document picker is available in the macOS app. You can continue without attachments.");
+  };
+  const connectCli = (id) => run(async () => {
+    const d = await postJson("provider-cli", { provider: id, action: "login" });
+    flash(d.note || `Opened ${d.command}`);
+    await loadProviders();
+  });
+  const chooseProvider = (id) => run(async () => {
+    setProviderId(id);
+    await postJson("onboarding", { action: "set-provider", providerId: id });
+    await pull();
+  });
+  const createProject = () => run(async () => {
+    if (appId) return { app: { id: appId } };
+    const body = mode === "code"
+      ? { repo: repoPath.trim(), name: projectName.trim(), onboarding: true, startPaused: true, providerId }
+      : { name: scratchName.trim(), brief: scratchBrief.trim(), workspace: workspace.trim(), files: documents, providerId, startPaused: true };
+    const d = await postJson(mode === "code" ? "project" : "scratch-project", body);
+    setAppId(d.app.id);
+    setProjectName(d.app.name || projectName);
+    flash(`${d.app.name || "Project"} added paused for brain review`);
+    await pull();
+    return d;
+  });
+  const study = () => run(async () => {
+    const id = appId || (await createProject())?.app?.id;
+    if (!id) return null;
+    const d = await postJson("onboarding/understand", { appId: id, mode, brief: mode === "scratch" ? scratchBrief : "", documents });
+    setUnderstanding(d);
+    setBrainText(d.proposed || "");
+    setGates(d.gates || []);
+    setBrainApproved(false);
+    setGatesSaved(false);
+    flash("Project brain drafted from real local context");
+    await pull();
+    return d;
+  });
+  const approveBrain = () => run(async () => {
+    if (!appId) throw new Error("Add a project first.");
+    const d = await postJson("onboarding/brain", { appId, editedText: brainText });
+    setBrainApproved(true);
+    if (d.onboarding) setStep(Math.max(step, 3));
+    flash("Project brain approved");
+    await pull();
+  });
+  const saveGates = () => run(async () => {
+    if (!appId) throw new Error("Add a project first.");
+    const enabled = gates.filter((g) => g.enabled !== false && (g.say || g.text || "").trim());
+    if (!enabled.length) throw new Error("Keep at least one Definition-of-Done gate.");
+    const d = await postJson("onboarding/gates", { appId, gates: enabled, mergePolicy, shipPolicy });
+    setGates(d.gates || enabled);
+    setGatesSaved(true);
+    flash("Definition-of-Done gates saved");
+    await pull();
+  });
+  const launch = () => run(async () => {
+    if (!appId) throw new Error("Add a project first.");
+    await postJson("onboarding/launch", { appId });
+    flash("FleetLoops is running this project");
+    await pull();
+    onDone();
+  });
+  const next = () => run(async () => {
+    if (step === 0) { await postJson("onboarding", { action: "set-provider", providerId }); await saveStep(1); }
+    else if (step === 1) { await createProject(); await saveStep(2); }
+    else if (step === 2) { if (!brainApproved) throw new Error("Approve the project brain first."); await saveStep(3); }
+    else if (step === 3) { if (!gatesSaved) await saveGates(); await saveStep(4); }
+    else await launch();
+  });
+  const back = () => setStep((s) => Math.max(0, s - 1));
+
   return (
-    <>
-      <Header title="Welcome to Fleet" subtitle="Your projects, working on themselves" />
-      <div className="p-6 overflow-y-auto max-w-2xl">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-indigo-600 flex items-center justify-center"><Bot className="w-6 h-6 text-white" /></div>
-            <div>
-              <div className="text-lg font-semibold">Let's get your fleet working</div>
-              <div className="text-sm text-slate-400">Two quick steps. Fleet studies each project, then works it toward "done" on its own — pausing only when it truly needs you.</div>
-            </div>
+    <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="FleetLoops setup">
+      <div className="night-panel rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col">
+        <div className="px-5 py-4 border-b border-slate-800 flex items-start gap-3">
+          <Boxesish />
+          <div className="min-w-0 flex-1">
+            <div className="font-display text-xl font-bold">FleetLoops setup</div>
+            <div className="text-xs text-slate-500">Connect an agent, create a project, approve its brain, define done, then launch.</div>
           </div>
-
-          <div className="mt-6 space-y-3">
-            <div className={`rounded-xl border p-4 ${anyAgent ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-700 bg-slate-950"}`}>
-              <div className="flex items-center gap-2">
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${anyAgent ? "bg-emerald-500 text-white" : "bg-slate-700 text-slate-300"}`}>{anyAgent ? "✓" : "1"}</span>
-                <span className="font-medium text-slate-200">Connect a coding agent</span>
-                {providers && <span className={`ml-auto text-[11px] ${anyAgent ? "text-emerald-300" : "text-slate-500"}`}>{anyAgent ? "connected" : "not connected yet"}</span>}
-              </div>
-              <p className="text-sm text-slate-400 mt-2">Sign in with the Codex or Claude CLI, or paste an API key (OpenAI, Anthropic, DeepSeek, Gemini, OpenRouter) — or point Fleet at a local model. Without one, Fleet can read your code but can't work on it.</p>
-              <button onClick={onProviders} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Key className="w-4 h-4" />{anyAgent ? "Manage providers" : "Connect an agent"}</button>
-            </div>
-
-            <div className="rounded-xl border border-slate-700 bg-slate-950 p-4">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-slate-700 text-slate-300">2</span>
-                <span className="font-medium text-slate-200">Add your first project</span>
-              </div>
-              <p className="text-sm text-slate-400 mt-2">Choose a folder that holds your code. Fleet detects the stack, writes the project into your real config, and starts from a private worktree when the repo is under git.</p>
-              <button onClick={onAddProject} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700"><FolderGit2 className="w-4 h-4" />Add project</button>
-              <p className="text-xs text-slate-500 mt-2">Tip: keep projects out of Downloads — macOS restricts background access there.</p>
-            </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800 flex items-center justify-center" title="Close setup"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 pt-4">
+          <div className="grid grid-cols-5 gap-2">
+            {ONBOARDING_STEPS.map((s, i) => <button key={s} onClick={() => i <= step && setStep(i)} className={`h-1.5 rounded-full ${i <= step ? "bg-indigo-500" : "bg-slate-800"}`} title={s} aria-label={s} />)}
           </div>
-
-          <p className="text-xs text-slate-500 mt-5">Once a project is added, Fleet studies it and shows you how it understands the codebase — you approve that before any work begins.</p>
+          <div className="mt-2 flex justify-between text-[11px] text-slate-500">{ONBOARDING_STEPS.map((s, i) => <span key={s} className={i === step ? "text-slate-200" : ""}>{s}</span>)}</div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {onboarding.oldFleet?.detected && !onboarding.migration?.choice && <MigrationPrompt onboarding={onboarding} postJson={postJson} pull={pull} flash={flash} />}
+          {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 p-3 text-sm" role="alert">{error}</div>}
+          {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} loadProviders={loadProviders} flash={flash} />}
+          {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
+          {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} brainText={brainText} setBrainText={setBrainText} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
+          {step === 3 && <StepDone gates={gates} setGates={setGates} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} />}
+          {step === 4 && <StepLaunch app={activeApp} launch={launch} busy={busy} />}
+        </div>
+        <div className="px-5 py-4 border-t border-slate-800 flex items-center gap-2">
+          <button onClick={step === 0 ? onClose : back} disabled={busy} className="text-sm px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40">{step === 0 ? "Cancel" : "Back"}</button>
+          <div className="ml-auto text-[11px] text-slate-500">{busy ? "Working…" : canContinue ? "" : requiredHint(step)}</div>
+          <button onClick={next} disabled={busy || !canContinue} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-30">{step === 4 ? "Go to deck" : "Continue"}</button>
         </div>
       </div>
-    </>
+    </div>
+  );
+}
+
+function requiredHint(step) {
+  return step === 0 ? "Choose one ready CLI or verified API key"
+    : step === 1 ? "Add an existing folder or write a scratch brief"
+    : step === 2 ? "Approve the project brain"
+    : step === 3 ? "Save at least one gate"
+    : "";
+}
+
+function MigrationPrompt({ onboarding, postJson, pull, flash }) {
+  const act = (action) => postJson("onboarding", { action }).then((d) => { flash(action === "import-existing" ? "Old Fleet projects imported paused" : "Starting fresh"); pull(); return d; }).catch((e) => flash(String(e.message || e)));
+  return (
+    <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 flex items-start gap-3">
+      <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+      <div className="flex-1 text-sm">
+        <div className="font-semibold text-amber-100">Existing Fleet data found</div>
+        <div className="text-amber-100/75 mt-0.5">FleetLoops will not silently reuse old Fleet projects. Import them paused, or start with a clean FleetLoops setup.</div>
+        <div className="font-mono text-[11px] text-amber-100/50 mt-1">{onboarding.oldFleet.path}</div>
+      </div>
+      <button onClick={() => act("import-existing")} className="text-xs px-3 py-1.5 rounded-lg bg-amber-400 text-slate-900 font-medium hover:bg-amber-300">Import paused</button>
+      <button onClick={() => act("start-fresh")} className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-100 hover:bg-amber-500/10">Start fresh</button>
+    </div>
+  );
+}
+
+function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, loadProviders, flash }) {
+  const clis = providers.filter((p) => p.kind === "agentic-cli");
+  const apis = providers.filter((p) => p.kind === "api");
+  const chooseReadyProvider = (p) => {
+    if (p.connected || p.auth === "none-local") chooseProvider(p.id);
+    else if (p.kind === "agentic-cli" && !p.installed) flash(`${p.label} is not installed yet. Install the ${providerCliName(p)} CLI, then refresh.`);
+    else if (p.kind === "agentic-cli") flash(`${p.label} is not ready: ${p.detail || "sign in required"}`);
+    else flash(`${p.label} needs a verified API key first.`);
+  };
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-sm text-indigo-100">
+        Choose exactly one way to run the agent: a signed-in CLI subscription, or a verified API key. You do not need both.
+      </div>
+      <div className="grid lg:grid-cols-[.95fr_1.05fr] gap-4">
+      <Section title="Option A: Sign in with a CLI" hint="Use this when you want FleetLoops to run Codex or Claude Code through the subscription CLI already installed on this Mac.">
+        <div className="space-y-2">
+          {clis.map((p) => <PathCard key={p.id} active={providerId === p.id} icon={Cpu} title={p.label} meta={providerStatusText(p)} good={p.connected} onClick={() => chooseReadyProvider(p)}>
+            <div className="text-xs text-slate-500 mt-2">{p.detail || p.blurb}</div>
+            {!p.installed && <div className="text-xs text-amber-300/80 mt-1">Install the CLI first, then refresh this status. FleetLoops cannot continue with a missing command-line tool.</div>}
+            {p.installed && !p.connected && <div className="text-xs text-amber-300/80 mt-1">Finish sign-in or fix the account issue, then refresh. This CLI is not selectable yet.</div>}
+            <div className="flex gap-2 mt-3">
+              <button onClick={(e) => { e.stopPropagation(); connectCli(p.id); }} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
+              <button onClick={(e) => { e.stopPropagation(); loadProviders(); flash("Provider status refreshed"); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+            </div>
+          </PathCard>)}
+        </div>
+      </Section>
+      <Section title="Option B: Bring one API key" hint="Use this when you want FleetLoops to call a provider API directly. Keys are verified, then stored in the macOS Keychain.">
+        <div className="space-y-2">
+          {apis.map((p) => p.auth === "none-local"
+            ? <PathCard key={p.id} active={providerId === p.id} icon={Server} title={p.label} meta="Local endpoint" good onClick={() => chooseReadyProvider(p)} />
+            : <div key={p.id} onClick={() => chooseReadyProvider(p)} className={`rounded-xl border p-3 cursor-pointer ${providerId === p.id ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-950 hover:border-slate-700"}`}>
+                <ApiKeyCard p={p} flash={flash} reload={loadProviders} />
+              </div>)}
+        </div>
+        {selectedProvider && <div className="text-xs text-slate-500 mt-3">Selected: <span className="text-slate-300">{selectedProvider.label}</span> · {selectedProvider.connected || selectedProvider.auth === "none-local" ? "ready" : "connect it before continuing"}</div>}
+      </Section>
+      </div>
+    </div>
+  );
+}
+
+function providerStatusText(p) {
+  if (p.connected) return "Ready";
+  if (p.kind === "agentic-cli" && !p.installed) return "Not installed";
+  if (p.kind === "agentic-cli" && p.authenticated && !p.usable) return "Account issue";
+  if (p.kind === "agentic-cli") return "Sign in required";
+  return p.detail || "Not ready";
+}
+
+function providerCliName(p) {
+  if (p?.cli) return p.cli;
+  if (p?.id === "claude_cli") return "claude";
+  if (p?.id === "codex") return "codex";
+  return String(p?.command || "CLI").split(/\s+/)[0] || "CLI";
+}
+
+function PathCard({ active, icon: Icon, title, meta, good, onClick, children }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.(event);
+        }
+      }}
+      className={`w-full text-left rounded-xl border p-3 transition-colors cursor-pointer ${active ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-950 hover:border-slate-700"}`}
+    >
+      <div className="flex items-center gap-2">
+        <Icon className="w-4 h-4 text-slate-400" />
+        <span className="font-medium text-slate-100">{title}</span>
+        <span className={`ml-auto text-[11px] ${good ? "text-emerald-300" : "text-amber-300"}`}>{meta}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StepAdd({ mode, setMode, repoPath, setRepoPath, projectName, setProjectName, scratchName, setScratchName, scratchBrief, setScratchBrief, workspace, setWorkspace, documents, setDocuments, pickProject, pickDocuments, appId, activeApp, createProject, busy }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <PathCard active={mode === "code"} icon={FolderGit2} title="Existing code" meta="study a real folder" good={mode === "code"} onClick={() => setMode("code")} />
+        <PathCard active={mode === "scratch"} icon={WandSparkles} title="A new idea" meta="create a repo from a brief" good={mode === "scratch"} onClick={() => setMode("scratch")} />
+      </div>
+      {appId && activeApp ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+          <div className="font-medium text-emerald-200">{activeApp.name} added paused</div>
+          <div className="text-xs text-emerald-100/70 mt-1 font-mono truncate">{activeApp.repo}</div>
+        </div>
+      ) : mode === "code" ? (
+        <Section title="Choose the project folder" hint="FleetLoops detects the stack, writes config, and keeps the app paused until brain and gates are approved.">
+          <div className="grid sm:grid-cols-[1fr_auto] gap-2">
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">Project path</span>
+              <input value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="/absolute/path/to/project" className="mt-1 w-full rounded-lg px-3 py-2 text-sm font-mono" />
+            </label>
+            <button onClick={pickProject} className="self-end inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 hover:bg-slate-700"><FolderOpen className="w-4 h-4" />Choose folder</button>
+          </div>
+          <label className="mt-3 block">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500">Display name</span>
+            <input value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="Optional display name" className="mt-1 w-full rounded-lg px-3 py-2 text-sm" />
+          </label>
+          <p className="text-xs text-amber-300/80 mt-2">Avoid project folders inside Downloads for long-running background access.</p>
+          <button disabled={busy || !repoPath.trim()} onClick={createProject} className="mt-3 text-sm font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-30">Add paused project</button>
+        </Section>
+      ) : (
+        <Section title="Describe the app to create" hint="FleetLoops creates a local git repo with the brief, source docs, brain draft, and gate seeds.">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">App name</span>
+              <input value={scratchName} onChange={(e) => setScratchName(e.target.value)} placeholder="App name" className="mt-1 w-full rounded-lg px-3 py-2 text-sm" />
+            </label>
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">Workspace</span>
+              <input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="/path/to/workspace" className="mt-1 w-full rounded-lg px-3 py-2 text-sm font-mono" />
+            </label>
+          </div>
+          <label className="mt-3 block">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500">Product brief</span>
+            <textarea value={scratchBrief} onChange={(e) => setScratchBrief(e.target.value)} rows={7} placeholder="What should this app do, who is it for, and what would make v1 useful?" className="mt-1 w-full rounded-lg px-3 py-2 text-sm" />
+          </label>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <button onClick={pickDocuments} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800"><Paperclip className="w-4 h-4" />Attach docs</button>
+            {documents.map((d, i) => <Chip key={i} className="bg-slate-800 text-slate-400 border-slate-700 font-mono">{basenameSafe(d.path || d)}</Chip>)}
+          </div>
+          <button disabled={busy || scratchBrief.trim().length < 20 || !workspace.trim()} onClick={createProject} className="mt-3 text-sm font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-30">Create paused repo</button>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function basenameSafe(path) {
+  return String(path || "").split("/").filter(Boolean).pop() || "document";
+}
+
+function StepUnderstand({ appId, app, understanding, brainText, setBrainText, brainApproved, study, approveBrain, busy }) {
+  return (
+    <div className="grid lg:grid-cols-[.9fr_1.1fr] gap-4">
+      <Section title="Project understanding" hint="This is generated from the real local repo or scratch brief and saved as a proposed project brain.">
+        {!appId ? <EmptyPanel icon={FolderGit2} title="Add a project first" body="The brain review is tied to a real project config." /> : (
+          <>
+            <div className="text-sm text-slate-300">{app?.name || appId}</div>
+            <div className="text-xs text-slate-500 font-mono truncate mt-1">{app?.repo || ""}</div>
+            <button disabled={busy} onClick={study} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"><Brain className="w-4 h-4" />{understanding ? "Re-study" : "Study project"}</button>
+            {understanding?.facts?.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {understanding.facts.map((f, i) => <div key={i} className="rounded-lg bg-slate-950 border border-slate-800 p-2.5"><div className="text-[11px] uppercase text-slate-500">{f.label}</div><div className="text-sm text-slate-300 mt-0.5">{f.value}</div></div>)}
+              </div>
+            )}
+          </>
+        )}
+      </Section>
+      <Section title="Brain draft" hint="Review, edit if needed, then approve. Live work cannot start until this is approved.">
+        {brainText ? (
+          <>
+            <textarea value={brainText} onChange={(e) => setBrainText(e.target.value)} rows={20} className="w-full rounded-lg px-3 py-2 text-xs font-mono" />
+            <button disabled={busy || brainText.trim().length < 100 || brainApproved} onClick={approveBrain} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><CheckCircle2 className="w-4 h-4" />{brainApproved ? "Brain approved" : "Looks right — approve"}</button>
+          </>
+        ) : <EmptyPanel icon={Brain} title="No brain draft yet" body="Click Study project to generate a proposed project brain from real local context." />}
+      </Section>
+    </div>
+  );
+}
+
+function StepDone({ gates, setGates, mergePolicy, setMergePolicy, shipPolicy, setShipPolicy, saveGates, gatesSaved, busy }) {
+  const updateGate = (i, patch) => setGates((gs) => gs.map((g, idx) => idx === i ? { ...g, ...patch } : g));
+  const addGate = () => setGates((gs) => [...gs, { id: `gate-${gs.length + 1}`, say: "", check: "agent", effort: "M", enabled: true, source: "you" }]);
+  return (
+    <div className="grid lg:grid-cols-[1.15fr_.85fr] gap-4">
+      <Section title="Definition of Done" hint="Keep, drop, or edit the gates before the loop starts. Who proves the gate is part of the contract.">
+        <div className="space-y-2">
+          {gates.map((g, i) => <div key={g.id || i} className={`rounded-xl border p-3 ${g.enabled === false ? "border-slate-800 bg-slate-950 opacity-60" : "border-slate-800 bg-slate-950"}`}>
+            <div className="flex items-start gap-2">
+              <button onClick={() => updateGate(i, { enabled: g.enabled === false })} className={`w-6 h-6 rounded-md border flex items-center justify-center shrink-0 ${g.enabled === false ? "border-slate-700 text-slate-600" : "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"}`}>{g.enabled === false ? "" : "✓"}</button>
+              <input value={g.say || ""} onChange={(e) => updateGate(i, { say: e.target.value })} placeholder="Gate in plain English" className="flex-1 rounded-lg px-2 py-1.5 text-sm" />
+            </div>
+            <div className="mt-2 grid sm:grid-cols-3 gap-2 pl-8">
+              <select value={g.check || "agent"} onChange={(e) => updateGate(i, { check: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs">
+                <option value="auto">Loop proves</option>
+                <option value="agent">Agent works, you confirm</option>
+                <option value="human">Only you confirm</option>
+              </select>
+              <select value={g.effort || "M"} onChange={(e) => updateGate(i, { effort: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs">
+                <option value="S">Small</option><option value="M">Medium</option><option value="L">Large</option>
+              </select>
+              <input value={g.probe || ""} onChange={(e) => updateGate(i, { probe: e.target.value })} placeholder="Optional probe command" className="rounded-lg px-2 py-1.5 text-xs font-mono" />
+            </div>
+          </div>)}
+          <button onClick={addGate} className="text-xs px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Add gate</button>
+        </div>
+      </Section>
+      <Section title="Policies" hint="Approve-to-merge is safest for public release. Shipping is always human-owned unless you later change it.">
+        <PolicyPick title="Merge policy" value={mergePolicy} setValue={setMergePolicy} options={[["approve", "Approve before merge"], ["auto", "Auto-merge when safe"]]} />
+        <div className="mt-4" />
+        <PolicyPick title="Ship policy" value={shipPolicy} setValue={setShipPolicy} options={[["manual", "You ship"], ["ci", "CI pipeline"], ["store", "App Store pipeline"]]} />
+        <button disabled={busy || !gates.some((g) => g.enabled !== false && (g.say || "").trim())} onClick={saveGates} className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"><Check className="w-4 h-4" />{gatesSaved ? "Saved" : "Save gates"}</button>
+      </Section>
+    </div>
+  );
+}
+
+function PolicyPick({ title, value, setValue, options }) {
+  return <div><div className="text-xs font-semibold text-slate-400 mb-2">{title}</div><div className="space-y-2">{options.map(([id, label]) => <button key={id} onClick={() => setValue(id)} className={`w-full text-left rounded-lg border px-3 py-2 text-sm ${value === id ? "border-indigo-500 bg-indigo-600/10 text-slate-100" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"}`}>{label}</button>)}</div></div>;
+}
+
+function StepLaunch({ app, launch, busy }) {
+  return (
+    <div className="max-w-2xl mx-auto text-center py-10">
+      <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 text-emerald-300 flex items-center justify-center mx-auto"><Rocket className="w-7 h-7" /></div>
+      <div className="font-display text-2xl font-bold mt-4">Ready to launch the loop</div>
+      <p className="text-sm text-slate-400 mt-2">The project brain and Definition-of-Done gates are saved. FleetLoops will resume this app and begin work from the approved context.</p>
+      {app && <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-3 text-left"><div className="text-sm font-medium">{app.name}</div><div className="text-xs text-slate-500 font-mono truncate mt-1">{app.repo}</div></div>}
+      <button disabled={busy} onClick={launch} className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><Rocket className="w-4 h-4" />Start first loop</button>
+    </div>
   );
 }
 
@@ -1291,7 +1770,7 @@ function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTas
   const tabs = [
     { id: "now", label: "Now", icon: Activity },
     { id: "gates", label: `Gates${gates.length ? ` ${gatesMet}/${gates.length}` : ""}`, icon: ShieldCheck },
-    { id: "runs", label: `Runs ${total}`, icon: ListChecks },
+    { id: "runs", label: "Runs", icon: ListChecks },
     { id: "diff", label: `Diff${reviewTasks.length ? ` ${reviewTasks.length}` : ""}`, icon: FileDiff },
     { id: "brain", label: "Brain", icon: Brain },
   ];
@@ -1324,7 +1803,7 @@ function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTas
         <div className="flex-1 overflow-y-auto p-5">
           {tab === "now" && <AppNow app={app} done={done} total={total} gatesMet={gatesMet} gatesTotal={gates.length} />}
           {tab === "gates" && (gates.length ? <div className="max-w-3xl night-card rounded-xl p-4"><GateChecklist app={app} post={post} /></div> : <EmptyPanel icon={ShieldCheck} title="No gates yet" body="This app is still in backlog mode. When tasks finish, the planner proposes a definition-of-done checklist here." />)}
-          {tab === "runs" && <Backlog app={app} onAddTask={onAddTask} onDeleteTask={onDeleteTask} onUpdateTask={onUpdateTask} onMoveTask={onMoveTask} />}
+          {tab === "runs" && <RunHistory app={app} />}
           {tab === "diff" && <DiffTab app={app} reviewTasks={reviewTasks} />}
           {tab === "brain" && <BrainTab app={app} />}
         </div>
@@ -1372,15 +1851,56 @@ function WorkSummary({ icon: Icon, title, body }) {
   return <div className="flex items-start gap-3"><div className="w-9 h-9 rounded-lg bg-indigo-500/15 text-indigo-300 flex items-center justify-center shrink-0"><Icon className="w-4 h-4" /></div><div><div className="text-sm font-medium text-slate-100">{title}</div><div className="text-sm text-slate-400 mt-1">{body}</div></div></div>;
 }
 
+const RUN_STATUS_META = {
+  review: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30",
+  merged: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+  "sent-back": "bg-amber-500/10 text-amber-300 border-amber-500/30",
+  stuck: "bg-rose-500/10 text-rose-300 border-rose-500/30",
+  working: "bg-indigo-500/10 text-indigo-300 border-indigo-500/30",
+};
+
+function RunHistory({ app }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { fetch(`${API}/api/runs?appId=${app.id}`, { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => setData({ runs: [] })); }, [app.id]);
+  if (!data) return <div className="text-slate-500">Loading runs…</div>;
+  const runs = data.runs || [];
+  if (!runs.length) return <EmptyPanel icon={ListChecks} title="No runs recorded yet" body="Runs appear here after the loop works a task, submits a review branch, asks a question, or merges work." />;
+  return (
+    <div className="max-w-3xl space-y-2">
+      {runs.map((r) => (
+        <div key={r.id} className="night-card rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-400"><ListChecks className="w-4 h-4" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="font-medium text-slate-100">{r.title || r.id}</div>
+                <Chip className={RUN_STATUS_META[r.status] || RUN_STATUS_META.working}>{r.status}</Chip>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                <span className="font-mono">{r.id}</span>
+                {r.branch && <span className="font-mono">branch: {r.branch}</span>}
+                {r.duration && <span>{r.duration}</span>}
+                {r.costUsd > 0 && <span>${r.costUsd.toFixed(2)}</span>}
+              </div>
+              {r.summary && <div className="text-sm text-slate-400 mt-2">{r.summary}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DiffTab({ app, reviewTasks }) {
   const [selected, setSelected] = useState(reviewTasks[0]?.id || "");
   const [detail, setDetail] = useState(null);
   useEffect(() => { setSelected(reviewTasks[0]?.id || ""); }, [app.id, reviewTasks.length]);
   useEffect(() => {
     if (!selected) { setDetail(null); return; }
-    fetch(`${API}/api/approval?appId=${app.id}&taskId=${selected}`, { cache: "no-store" }).then((r) => r.json()).then(setDetail).catch(() => setDetail({ error: "Could not load diff." }));
+    fetch(`${API}/api/run-diff?appId=${app.id}&runId=${selected}`, { cache: "no-store" }).then((r) => r.json()).then(setDetail).catch(() => setDetail({ error: "Could not load diff." }));
   }, [app.id, selected]);
   if (!reviewTasks.length) return <EmptyPanel icon={FileDiff} title="No review branch yet" body="When the agent finishes code on a safe branch, the changed files and patch appear here from the real repository diff." />;
+  const files = parseUnifiedDiff(detail?.diff?.patch || "");
   return (
     <div className="grid lg:grid-cols-[260px_1fr] gap-4">
       <div className="space-y-2">{reviewTasks.map((t) => <button key={t.id} onClick={() => setSelected(t.id)} className={`w-full text-left rounded-xl border p-3 ${selected === t.id ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-900 hover:border-slate-700"}`}><div className="text-sm font-medium">{t.title}</div><div className="text-[11px] text-slate-500 mt-1">{t.branch || t.status}</div></button>)}</div>
@@ -1389,19 +1909,76 @@ function DiffTab({ app, reviewTasks }) {
         {detail?.error && <div className="text-rose-400">{detail.error}</div>}
         {detail && !detail.error && !detail.diff && <div className="text-slate-500">This review item has no branch diff available yet.</div>}
         {detail?.diff?.stat && <><div className="text-xs text-slate-500 mb-2">Files changed</div><pre className="text-xs text-slate-300 whitespace-pre-wrap mb-4">{detail.diff.stat}</pre></>}
-        {detail?.diff?.patch && <><div className="text-xs text-slate-500 mb-2">Patch</div><pre className="text-[11px] text-slate-300 whitespace-pre-wrap overflow-auto" style={{ maxHeight: "62vh" }}>{detail.diff.patch}</pre></>}
+        {detail?.diff?.patch && files.length > 0 && <StructuredDiff files={files} />}
+        {detail?.diff?.patch && !files.length && <pre className="text-[11px] text-slate-300 whitespace-pre-wrap overflow-auto" style={{ maxHeight: "62vh" }}>{detail.diff.patch}</pre>}
       </div>
+    </div>
+  );
+}
+
+function parseUnifiedDiff(patch) {
+  const files = [];
+  let file = null, hunk = null;
+  for (const line of String(patch || "").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      if (file) files.push(file);
+      const m = / b\/(.+)$/.exec(line);
+      file = { path: m ? m[1] : line.replace("diff --git ", ""), add: 0, del: 0, hunks: [] };
+      hunk = null;
+    } else if (file && line.startsWith("@@")) {
+      hunk = { h: line, lines: [] };
+      file.hunks.push(hunk);
+    } else if (file && hunk && line.startsWith("+") && !line.startsWith("+++")) {
+      hunk.lines.push({ type: "add", text: line });
+      file.add++;
+    } else if (file && hunk && line.startsWith("-") && !line.startsWith("---")) {
+      hunk.lines.push({ type: "del", text: line });
+      file.del++;
+    } else if (file && hunk) {
+      hunk.lines.push({ type: "ctx", text: line });
+    }
+  }
+  if (file) files.push(file);
+  return files;
+}
+
+function StructuredDiff({ files }) {
+  return <div className="space-y-3">{files.map((f) => <DiffFile key={f.path} file={f} />)}</div>;
+}
+
+function DiffFile({ file }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full px-3 py-2 flex items-center gap-2 text-left border-b border-slate-800">
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronUp className="w-3.5 h-3.5 text-slate-500" />}
+        <span className="font-mono text-xs text-slate-200 truncate flex-1">{file.path}</span>
+        <span className="font-mono text-[11px] text-emerald-300">+{file.add}</span>
+        <span className="font-mono text-[11px] text-rose-300">-{file.del}</span>
+      </button>
+      {open && <div className="overflow-x-auto">
+        {file.hunks.map((h, i) => (
+          <div key={i}>
+            <div className="px-3 py-1.5 text-[11px] font-mono text-cyan-300 bg-cyan-500/10">{h.h}</div>
+            {h.lines.map((l, j) => <div key={j} className={`px-3 py-0.5 text-[11px] font-mono whitespace-pre ${l.type === "add" ? "bg-emerald-500/10 text-emerald-200" : l.type === "del" ? "bg-rose-500/10 text-rose-200" : "text-slate-400"}`}>{l.text || " "}</div>)}
+          </div>
+        ))}
+      </div>}
     </div>
   );
 }
 
 function BrainTab({ app }) {
   const [data, setData] = useState(null);
+  const [timeline, setTimeline] = useState([]);
   const [text, setText] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => fetch(`${API}/api/brain?appId=${app.id}`, { cache: "no-store" }).then((r) => r.json()).then((d) => { setData(d); setText(d.proposed || d.active || ""); }).catch(() => setData({ proposed: "", active: "" })), [app.id]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    fetch(`${API}/api/brain-timeline?appId=${app.id}`, { cache: "no-store" }).then((r) => r.json()).then((d) => setTimeline(d.entries || [])).catch(() => setTimeline([]));
+  }, [app.id, load]);
   const postBrain = (action, extra = {}) => {
     setBusy(true);
     fetch(`${API}/api/brain`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ slug: app.id, action, ...extra }) })
@@ -1410,16 +1987,21 @@ function BrainTab({ app }) {
   if (!data) return <div className="text-slate-500">Loading project brain…</div>;
   const body = data.proposed || data.active || "";
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="grid lg:grid-cols-[1.1fr_.9fr] gap-4 max-w-6xl">
       <Section title="Project brain" hint="The approved understanding is injected into every future run. Proposed updates wait for your review.">
         <div className="flex items-center gap-2 flex-wrap mb-3"><Chip className="bg-indigo-500/10 text-indigo-300 border-indigo-500/30">status: {data.status || "none"}</Chip><Chip className="bg-slate-800 text-slate-400 border-slate-700">v{data.version || 0}</Chip>{data.proposed && <Chip className="bg-amber-500/10 text-amber-300 border-amber-500/30">review proposed update</Chip>}</div>
         {body ? <textarea value={text} onChange={(e) => setText(e.target.value)} rows={18} className="w-full text-xs font-mono rounded-lg px-3 py-2" /> : <EmptyPanel icon={Brain} title="No brain written yet" body="The next live agent pass studies the project and proposes a brain here for review before it becomes trusted context." />}
         {body && <div className="mt-3 flex gap-2 flex-wrap"><button disabled={busy || text.trim().length < 100} onClick={() => postBrain("approve", { editedText: text })} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><CheckCircle2 className="w-4 h-4" />Approve brain</button></div>}
       </Section>
-      <Section title="Ask for re-analysis" hint="Your notes are saved in state; the fleet revises its understanding on the next pass.">
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="What did the current understanding miss or get wrong?" className="w-full text-sm rounded-lg px-3 py-2" />
-        <button disabled={busy || !notes.trim()} onClick={() => postBrain("refine", { notes })} className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"><RefreshCw className="w-4 h-4" />Request re-analysis</button>
-      </Section>
+      <div className="space-y-4">
+        <Section title="Brain timeline" hint="Learnings, decisions, constraints, and gate evidence derived from real state.">
+          {timeline.length ? <div className="space-y-2">{timeline.map((e, i) => <div key={i} className="rounded-lg border border-slate-800 bg-slate-950 p-2.5"><div className="flex items-center gap-2"><Chip className={e.tag === "constraint" ? "bg-amber-500/10 text-amber-300 border-amber-500/30" : e.tag === "decision" ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30" : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"}>{e.tag}</Chip>{e.when && <span className="text-[11px] text-slate-500 font-mono">{e.when}</span>}</div><div className="text-sm text-slate-300 mt-1">{e.text}</div></div>)}</div> : <EmptyPanel icon={Brain} title="No timeline entries yet" body="Approving the brain, adding gates, and completing runs creates timeline entries here." />}
+        </Section>
+        <Section title="Ask for re-analysis" hint="Your notes are saved in state; the fleet revises its understanding on the next pass.">
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="What did the current understanding miss or get wrong?" className="w-full text-sm rounded-lg px-3 py-2" />
+          <button disabled={busy || !notes.trim()} onClick={() => postBrain("refine", { notes })} className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"><RefreshCw className="w-4 h-4" />Request re-analysis</button>
+        </Section>
+      </div>
     </div>
   );
 }
@@ -1630,7 +2212,15 @@ function ActivityFeed({ app }) {
 }
 
 function Header({ title, subtitle, right }) {
-  return <div className="border-b border-slate-800 bg-slate-900 px-6 h-16 flex items-center justify-between"><div className="min-w-0"><h1 className="font-display text-xl font-bold tracking-tight">{title}</h1>{subtitle && <div className="text-[11px] text-slate-500 -mt-0.5 truncate">{subtitle}</div>}</div><div className="shrink-0">{right}</div></div>;
+  return (
+    <div className="border-b border-slate-800 bg-slate-900 px-4 sm:px-6 py-3 min-h-16 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
+      <div className="min-w-0">
+        <h1 className="font-display text-lg sm:text-xl font-bold tracking-tight leading-tight">{title}</h1>
+        {subtitle && <div className="text-[11px] text-slate-500 mt-0.5">{subtitle}</div>}
+      </div>
+      {right && <div className="shrink-0 flex flex-wrap items-center gap-2">{right}</div>}
+    </div>
+  );
 }
 function LiveTag({ connected, updatedAt, onRefresh }) {
   return <button onClick={onRefresh} className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200"><span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400 animate-pulse" : "bg-amber-500"}`} />{connected ? "Live" : "Reconnecting"}{updatedAt && <span className="text-slate-600">· {updatedAt.toLocaleTimeString()}</span>}<RefreshCw className="w-3.5 h-3.5" /></button>;

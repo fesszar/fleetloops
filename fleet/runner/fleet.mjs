@@ -18,9 +18,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { platform, homedir } from "node:os";
-import { loadConfig, loadState, runLoopOnce, readAllEscalations, expandHome, STATE_DIR } from "./loop.mjs";
+import { loadConfig, loadState, runLoopOnce, readAllEscalations, expandHome, STATE_DIR, CONFIG_FILE } from "./loop.mjs";
 import { runEvolvePass } from "./conditions.mjs";
 import { acquireRunLock, releaseRunLock } from "./util.mjs";
+import { addProjectToConfig } from "./project-onboard.mjs";
 
 // Pick the right loop: exit-condition pass if the app has gates, else the classic task loop.
 function appUsesConditions(app) {
@@ -29,7 +30,7 @@ function appUsesConditions(app) {
 }
 const runForApp = (app, fleet, opts) => appUsesConditions(app) ? runEvolvePass(app, fleet, opts) : runLoopOnce(app, fleet, opts);
 
-const CONFIG_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "fleet.config.json");
+const CONFIG_PATH = CONFIG_FILE;
 
 // Restore tool paths when invoked from a thin environment (launchd/systemd/cron).
 function toolPaths() {
@@ -246,36 +247,13 @@ function onboard() {
   const slug = (args[1] || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
   const repoArg = val("repo");
   if (!slug || !repoArg) return console.log(`usage: node fleet.mjs onboard <slug> --repo <path> [--name "Display Name"] [--north-star "..."]`);
-  const repo = expandHome(repoArg);
-  if (!existsSync(repo)) return console.log(`${C.red}Repo not found:${C.x} ${repo}`);
   const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-  if (cfg.apps.find((a) => a.slug === slug)) return console.log(`'${slug}' already exists.`);
-  const det = detectStack(repo);
-  const inGit = spawnSync("git", ["-C", repo, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8" });
-  const isGit = inGit.status === 0 && /true/.test(inGit.stdout || "");
-  const name = val("name") || slug;
-  const block = {
-    slug, name, repo: repoArg, stage: "partial-build", loop: isGit ? "running" : "paused",
-    autonomy: "branch-approve", maxAutonomy: "merge-main", deployPolicy: "none", vcs: isGit ? "git" : "none",
-    needsBootstrap: !isGit, stack: det.stack,
-    northStar: val("north-star") || "TODO — the single outcome that means v1 is done.",
-    agent: { adapter: "shell", command: `cd "{{REPO}}" && codex exec -c sandbox_workspace_write.network_access=true --sandbox workspace-write -c model_reasoning_effort={{REASONING}} - < "{{PROMPT_FILE}}"` },
-    triggers: ["command", "test-fail"], schedule: "—", retryCap: 3,
-    commands: { install: "", build: det.build, test: det.test, deploy: "" },
-    gates: det.test ? [det.test] : ["TODO: a runnable test/build command"],
-    guardrails: ["Never commit secrets"], offLimits: [".env"],
-    standingContext: `Stack detected: ${det.stack}.${isGit ? "" : " NOT under git yet — bootstrap first."}`,
-    eightyTwentyLoop: "Make the single highest-value change toward production readiness; never busywork.",
-    escalateWhen: ["Any deploy/publish", "Anything irreversible"],
-    backlog: [],
-    exitConditions: [],   // empty on purpose: the planner seeds the definition of done on the first live pass
-  };
-  cfg.apps.push(block);
+  const result = addProjectToConfig(cfg, { repo: repoArg, slug, name: val("name") || slug, northStar: val("north-star") });
+  if (!result.ok) return console.log(`${C.red}${result.error}${C.x}`);
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
-  if (isGit) { try { scaffoldRepoEnv(repo, det); } catch {} }
-  console.log(`\n${C.grn}✓ Onboarded '${slug}'${C.x} (stack: ${det.stack}, test: ${det.test || "none detected"}, git: ${isGit ? "yes" : "NO — bootstrap before live"})`);
+  console.log(`\n${C.grn}✓ Onboarded '${result.app.slug}'${C.x} (stack: ${result.det.stack}, test: ${result.det.test || "none detected"}, git: ${result.isGit ? "yes" : "NO — bootstrap before live"})`);
   console.log(`${C.dim}  Scaffolded .fleet/setup.sh + .fleet/env.sh (test environment) and .fleet/CERTIFICATIONS.md (human-only items). The agent fills these in on its first pass.${C.x}`);
-  console.log(`${C.dim}Next: ${isGit ? "" : `1) put it under git (fleet/bootstrap kit), `}run 'node fleet.mjs run --only ${slug} --live' — the planner will propose its definition of done; review the gates on the dashboard.${C.x}\n`);
+  console.log(`${C.dim}Next: ${result.isGit ? "" : `1) put it under git, `}run 'node fleet.mjs run --only ${result.app.slug} --live' — the planner will propose its definition of done; review the gates on the dashboard.${C.x}\n`);
 }
 
 function addLoop() {

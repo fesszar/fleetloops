@@ -45,11 +45,12 @@ done
 
 echo "▸ Bundle a universal2 Node ${NODE_VERSION}"
 fetch_node () {  # $1 = arch (arm64|x64)
-  local arch="$1" tarball="node-v${NODE_VERSION}-darwin-${arch}.tar.gz"
+  local node_arch="$1"
+  local tarball="node-v${NODE_VERSION}-darwin-${node_arch}.tar.gz"
   local url="https://nodejs.org/dist/v${NODE_VERSION}/${tarball}"
   curl -fsSL "$url" -o "$BUILD/$tarball"
   tar -xzf "$BUILD/$tarball" -C "$BUILD"
-  echo "$BUILD/node-v${NODE_VERSION}-darwin-${arch}/bin/node"
+  echo "$BUILD/node-v${NODE_VERSION}-darwin-${node_arch}/bin/node"
 }
 NODE_ARM="$(fetch_node arm64)"
 NODE_X64="$(fetch_node x64)"

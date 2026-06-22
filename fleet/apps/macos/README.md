@@ -57,14 +57,15 @@ Without `DEVELOPER_ID` the script still assembles an ad-hoc-signed `Fleet.app` y
 
 ## Status
 
-- **Dashboard renders today.** `fleet/web/` already builds to a self-contained `app.js` (esbuild + tailwind via `web/build.sh`), and the bridge serves it with the token injected. The WKWebView loads the full dashboard — Overview, Approvals, Trust, **Providers & keys**, and **Cost** — with no extra build step. Rebuild the bundle after editing `FleetView.jsx` with `bash fleet/web/build.sh`.
+- **Dashboard is production-wired.** `fleet/web/` builds to a self-contained `app.js` (esbuild + tailwind via `web/build.sh`), and the bridge serves it with the token injected. The WKWebView loads the full dashboard — Overview, Approvals, Trust, **Providers & keys**, **Cost**, Settings, and the project cockpit — with no extra build step. Rebuild the bundle after editing `FleetView.jsx` with `bash fleet/web/build.sh`.
 - **Providers/Keys/Cost screens are live** and call the engine's `/api/providers`, `/api/provider-key`, `/api/cost`, and `/api/setup-consent` endpoints. The native shell already grants folder access (`RepoAccess`) and can inject Keychain keys (`KeychainBridge`).
+- **Add Project is native.** The dashboard calls into Swift, opens the macOS folder picker, then posts the selected repo to `POST /api/project` so newly added projects are persisted through the same config path as the CLI.
+- **Direct distribution is supported.** `build-app.sh` produces `build/Fleet.app` and `build/Fleet.dmg`; the app and DMG have been signed, notarized, stapled, and accepted by Gatekeeper with a Developer ID identity.
 
-## Remaining (need YOUR accounts/credentials — I can't do these for you)
+## Remaining release operations
 
-- **Notarization** requires your Apple **Developer ID** (`DEVELOPER_ID` + a `notarytool` profile). Without it, `build-app.sh` produces an ad-hoc-signed app that runs locally but trips Gatekeeper on other Macs.
-- **Sparkle auto-update**: `Info.plist` carries `SUFeedURL` + `SUPublicEDKey` placeholders; wiring the Sparkle framework + hosting the appcast needs a URL you control and an EdDSA key you generate.
-- **A full multi-step onboarding wizard** (welcome → connect agent → grant folder → add project → review brain) is a nice-to-have; the **Providers & keys** screen already covers the essential first-run step (connect an agent / paste a key), and "Add Project" grants a folder.
+- **Sparkle auto-update**: `Info.plist` carries `SUFeedURL` + `SUPublicEDKey` placeholders; wiring the Sparkle framework + hosting the appcast needs a release URL and EdDSA key. Direct DMG distribution works without Sparkle.
+- **Native WKWebView click pass**: browser automation covered the live dashboard, but a final human click pass through the packaged window is still useful before a broad launch.
 
 ## Why hardened runtime, not App Sandbox
 

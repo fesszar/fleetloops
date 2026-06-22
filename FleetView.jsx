@@ -5,7 +5,8 @@ import {
   Activity, Settings, ListChecks, ArrowLeft, ShieldAlert, Zap, Bot, Edit3, FolderGit2,
   Search, GitMerge, Rocket, Wifi, WifiOff, RefreshCw, Lock, Brain, PlugZap, BookText,
   Bell, BellOff, FileDiff, Trophy, ShieldCheck,
-  Key, Wallet, Cpu, ExternalLink,
+  Key, Wallet, Cpu, ExternalLink, Route, SlidersHorizontal, CalendarClock, BellRing, Gauge,
+  Server, Check, X, CircleCheck,
 } from "lucide-react";
 
 let _audio;
@@ -31,6 +32,53 @@ function notify(n) { try { if ("Notification" in window && Notification.permissi
 */
 
 const API = (typeof location !== "undefined" && location.protocol === "file:") ? "http://localhost:7777" : "";
+
+const c = {
+  bg: "#0A0F1C", bgGrad: "#0C1322", panel: "#111A2C", panel2: "#0E1626", raised: "#172339",
+  console: "#070C16", line: "rgba(255,255,255,.075)", lineSoft: "rgba(255,255,255,.045)",
+  text: "#EAF0FB", sub: "#AAB6CC", muted: "#8693AB", brand: "#5B6CFF", brandDeep: "#4C5AE0",
+  working: "#5CC8FF", needs: "#FFC34D", done: "#54E0A6", idle: "#9BA8BE", gold: "#FFCE73", err: "#FF8A9B",
+};
+const font = {
+  display: '"Space Grotesk", "Inter", system-ui, sans-serif',
+  body: '"IBM Plex Sans", Inter, system-ui, sans-serif',
+  mono: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+};
+const NIGHT_CSS = `
+  :root { color-scheme: dark; }
+  .fleet-night { min-height: 100vh; background: radial-gradient(1300px 640px at 80% -10%, ${c.bgGrad}, ${c.bg} 62%); color: ${c.text}; font-family: ${font.body}; letter-spacing: 0; }
+  .fleet-night * { letter-spacing: 0; }
+  .fleet-night .font-display { font-family: ${font.display}; }
+  .fleet-night .font-mono { font-family: ${font.mono}; }
+  .fleet-night .bg-slate-950 { background-color: ${c.bg} !important; }
+  .fleet-night .bg-slate-900 { background-color: ${c.panel} !important; }
+  .fleet-night .bg-slate-800 { background-color: ${c.raised} !important; }
+  .fleet-night .border-slate-800 { border-color: ${c.line} !important; }
+  .fleet-night .border-slate-700 { border-color: rgba(255,255,255,.12) !important; }
+  .fleet-night .text-slate-100, .fleet-night .text-slate-200 { color: ${c.text} !important; }
+  .fleet-night .text-slate-300 { color: ${c.sub} !important; }
+  .fleet-night .text-slate-400 { color: ${c.muted} !important; }
+  .fleet-night .text-slate-500 { color: #718096 !important; }
+  .fleet-night .rounded-xl { border-radius: 12px !important; }
+  .fleet-night .rounded-2xl { border-radius: 18px !important; }
+  .fleet-night input, .fleet-night textarea, .fleet-night select { background: ${c.console} !important; color: ${c.text}; border-color: ${c.line}; }
+  .fleet-night input::placeholder, .fleet-night textarea::placeholder { color: ${c.muted}; }
+  .fleet-night button { outline-color: ${c.brand}; }
+  .fleet-night .night-sidebar { width: 272px; background: rgba(8,12,22,.68) !important; backdrop-filter: blur(10px); }
+  .fleet-night .night-panel { background: linear-gradient(180deg, rgba(17,26,44,.98), rgba(14,22,38,.98)); border: 1px solid ${c.line}; box-shadow: 0 24px 80px rgba(0,0,0,.28); }
+  .fleet-night .night-card { background: ${c.panel}; border: 1px solid ${c.line}; box-shadow: 0 16px 44px rgba(0,0,0,.18); }
+  .fleet-night .night-card:hover { border-color: rgba(255,255,255,.15); }
+  .fleet-night .night-console { background: ${c.console}; border: 1px solid ${c.lineSoft}; font-family: ${font.mono}; }
+  .fleet-night .night-active { background: linear-gradient(90deg, rgba(91,108,255,.16), transparent) !important; border-color: ${c.line} !important; color: ${c.text} !important; }
+  .fleet-night .night-drawer { position: fixed; inset: 0; z-index: 40; display: flex; justify-content: flex-end; background: rgba(3,7,18,.58); backdrop-filter: blur(5px); }
+  .fleet-night .night-drawer-inner { width: min(920px, calc(100vw - 24px)); height: calc(100vh - 24px); margin: 12px; overflow: hidden; border-radius: 18px; background: ${c.panel2}; border: 1px solid ${c.line}; box-shadow: 0 32px 100px rgba(0,0,0,.55); }
+  @media (max-width: 860px) {
+    .fleet-night { display: block; }
+    .fleet-night .night-sidebar { width: 100%; height: auto; position: relative; }
+    .fleet-night .night-sidebar-apps { max-height: 170px; }
+    .fleet-night .night-drawer-inner { width: calc(100vw - 16px); height: calc(100vh - 16px); margin: 8px; border-radius: 14px; }
+  }
+`;
 
 const LOOP_STATES = {
   running: { label: "Running", dot: "bg-emerald-500", chip: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" },
@@ -125,7 +173,7 @@ const ACT_KIND = { ok: "border-emerald-500", info: "border-slate-500", warn: "bo
 let _id = 1000; const nid = (p) => `${p}${++_id}`;
 
 function Chip({ className = "", children, title }) {
-  return <span title={title} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${className}`}>{children}</span>;
+  return <span title={title} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border whitespace-nowrap ${className}`}>{children}</span>;
 }
 function Bar({ value, tone = "bg-indigo-500" }) {
   return <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className={`h-full ${tone} rounded-full transition-all`} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>;
@@ -215,12 +263,13 @@ export default function FleetView() {
   const [approvals, setApprovals] = useState([]);
   const [milestones, setMilestones] = useState([]);
   const [fleetPause, setFleetPause] = useState(null);
+  const [fleetConfig, setFleetConfig] = useState(null);
   const [lastPass, setLastPass] = useState(null);
   const [current, setCurrent] = useState(null);
   const [connected, setConnected] = useState(null); // null=connecting, true, false
   const [view, setView] = useState("overview");
   const [activeAppId, setActiveAppId] = useState(null);
-  const [appTab, setAppTab] = useState("backlog");
+  const [appTab, setAppTab] = useState("now");
   const [toast, setToast] = useState(null);
   const [query, setQuery] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -260,6 +309,7 @@ export default function FleetView() {
       setApps(data.apps || []);
       setApprovals(data.approvals || []);
       setMilestones(data.milestones || []);
+      setFleetConfig(data.fleet || null);
       setFleetPause(data.fleetPause || null);
       setLastPass(data.lastPass || null);
       setCurrent(data.current || null);
@@ -285,7 +335,14 @@ export default function FleetView() {
   const runAll = () => { post("loop", { slug: "*", action: "resume" }); flash("All eligible loops started"); };
   const pauseAll = () => { post("loop", { slug: "*", action: "pause" }); flash("All loops paused"); };
   const addTask = (appId) => post("task", { slug: appId, action: "add", task: { id: nid("T"), title: "New task", status: "queued", difficulty: "medium", deps: [], ac: "Define acceptance criteria", files: "—" } });
-  const deleteTask = (appId, tid) => post("task", { slug: appId, action: "delete", taskId: tid });
+  const deleteTask = (appId, tid) => {
+    const app = apps.find((x) => x.id === appId);
+    const task = app?.tasks.find((x) => x.id === tid);
+    const label = task?.title || tid;
+    if (typeof window !== "undefined" && !window.confirm(`Delete "${label}"? This removes the task from the queue and cannot be undone.`)) return;
+    post("task", { slug: appId, action: "delete", taskId: tid });
+    flash("Task deleted");
+  };
   const updateTask = (appId, tid, patch) => post("task", { slug: appId, action: "update", taskId: tid, patch });
   const moveTask = (appId, tid, dir) => post("task", { slug: appId, action: "move", taskId: tid, dir });
   const resolveApproval = async (item, decision, answer) => {
@@ -296,19 +353,34 @@ export default function FleetView() {
     } catch { flash("Action failed — is the service running?"); }
     pull();
   };
-  const openApp = (id) => { setActiveAppId(id); setAppTab("backlog"); setView("app"); };
+  const openApp = (id) => { setActiveAppId(id); setAppTab("now"); };
+  const addProjectFromNative = () => {
+    const handler = typeof window !== "undefined" ? window.webkit?.messageHandlers?.fleetAddProject : null;
+    if (handler) {
+      handler.postMessage({});
+      flash("Choose a project folder in the macOS prompt");
+    } else {
+      flash("Use Fleet menu bar → Add Project… in the macOS app");
+    }
+  };
 
   if (connected === false && apps.length === 0) return <Disconnected onRetry={pull} />;
   if (connected === null && apps.length === 0) return <Connecting />;
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex font-sans text-[13px]">
-      <aside className="w-60 shrink-0 border-r border-slate-800 bg-slate-900 flex flex-col">
-        <div className="px-4 h-14 flex items-center gap-2 border-b border-slate-800">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center"><Bot className="w-4 h-4 text-white" /></div>
-          <div className="font-semibold tracking-tight">FleetView</div>
+    <div className="fleet-night min-h-screen w-full flex text-[13px]">
+      <style>{NIGHT_CSS}</style>
+      <aside className="night-sidebar shrink-0 border-r border-slate-800 bg-slate-900 flex flex-col sticky top-0 h-screen">
+        <div className="px-4 pt-3 pb-2 border-b border-slate-800">
+          <div className="flex gap-1.5 mb-3" aria-hidden="true">
+            {["#FF5F57", "#FEBC2E", "#28C840"].map((x) => <span key={x} className="w-3 h-3 rounded-full" style={{ background: x }} />)}
+          </div>
+          <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-950/40"><Bot className="w-5 h-5 text-white" /></div>
+          <div><div className="font-display font-bold tracking-tight text-[17px]">FleetView</div><div className="font-mono text-[10px] text-slate-500">{apps.length} APPS</div></div>
           <button onClick={toggleSound} title={soundOn ? "Approval sounds on — click to mute" : "Muted — click to enable sounds + alerts"} className="ml-auto text-slate-400 hover:text-slate-200">{soundOn ? <Bell className="w-4 h-4 text-indigo-400" /> : <BellOff className="w-4 h-4" />}</button>
           <span title={connected ? "Live" : "Reconnecting"}>{connected ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-amber-500" />}</span>
+          </div>
         </div>
         <div className="p-2">
           <div className="relative"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
@@ -318,13 +390,13 @@ export default function FleetView() {
           <SideItem active={view === "overview"} onClick={() => setView("overview")} icon={LayoutGrid} label="Fleet Overview" />
           <SideItem active={view === "approvals"} onClick={() => setView("approvals")} icon={Inbox} label="Approvals" badge={approvals.length} />
           <SideItem active={view === "trust"} onClick={() => setView("trust")} icon={ShieldCheck} label="Trust &amp; autopilot" />
-          <SideItem active={view === "providers"} onClick={() => setView("providers")} icon={Key} label="Providers &amp; keys" />
+          <SideItem active={view === "providers"} onClick={() => setView("providers")} icon={SlidersHorizontal} label="Settings" />
           <SideItem active={view === "cost"} onClick={() => setView("cost")} icon={Wallet} label="Cost" />
         </nav>
         <div className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Apps ({filtered.length})</div>
-        <div className="px-2 pb-3 space-y-0.5 overflow-y-auto">
+        <div className="night-sidebar-apps px-2 pb-3 space-y-0.5 overflow-y-auto">
           {filtered.map((a) => (
-            <button key={a.id} onClick={() => openApp(a.id)} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${view === "app" && activeAppId === a.id ? "bg-indigo-600/20 text-indigo-300" : "hover:bg-slate-800 text-slate-300"}`}>
+            <button key={a.id} onClick={() => openApp(a.id)} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${activeAppId === a.id ? "night-active text-indigo-300" : "hover:bg-slate-800 text-slate-300"}`}>
               <span className={`w-2 h-2 rounded-full ${LOOP_STATES[a.loop]?.dot || "bg-slate-500"}`} /><span className="truncate">{a.name}</span>
             </button>
           ))}
@@ -337,16 +409,15 @@ export default function FleetView() {
 
       <main className="flex-1 min-w-0 flex flex-col">
         {view === "overview" && connected && apps.length === 0
-          ? <Onboarding onProviders={() => setView("providers")} />
+          ? <Onboarding onProviders={() => setView("providers")} onAddProject={addProjectFromNative} />
           : view === "overview" && <Overview stats={stats} apps={filtered} onToggle={toggleLoop} onOpen={openApp} connected={connected} updatedAt={updatedAt} onRefresh={pull} post={post} fleetPause={fleetPause} lastPass={lastPass} current={current} milestones={milestones} onGoApprovals={() => setView("approvals")} onResume={() => { post("loop", { slug: "*", action: "resume" }); flash("Resumed — the fleet picks up on the next tick"); }} />}
         {view === "approvals" && <Approvals approvals={approvals} apps={apps} onResolve={resolveApproval} onOpen={openApp} />}
         {view === "trust" && <TrustPanel flash={flash} />}
-        {view === "providers" && <ProvidersPanel flash={flash} />}
+        {view === "providers" && <SettingsPanel apps={apps} fleet={fleetConfig} flash={flash} pull={pull} setFleetConfig={setFleetConfig} />}
         {view === "cost" && <CostPanel />}
-        {view === "app" && activeApp && <AppDetail app={activeApp} tab={appTab} setTab={setAppTab} post={post} onBack={() => setView("overview")} onToggle={toggleLoop} onStop={() => { post("loop", { slug: activeApp.id, action: "stop" }); flash(`${activeApp.name}: stopped`); }} onAddTask={addTask} onDeleteTask={deleteTask} onUpdateTask={updateTask} onMoveTask={moveTask} />}
-        {view === "app" && !activeApp && <div className="p-10 text-slate-500">App not found.</div>}
       </main>
 
+      {activeApp && <AppDrawer app={activeApp} tab={appTab} setTab={setAppTab} post={post} onClose={() => setActiveAppId(null)} onToggle={toggleLoop} onStop={() => { post("loop", { slug: activeApp.id, action: "stop" }); flash(`${activeApp.name}: stopped`); }} onAddTask={addTask} onDeleteTask={deleteTask} onUpdateTask={updateTask} onMoveTask={moveTask} />}
       {toast && <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-white text-slate-900 text-sm px-4 py-2 rounded-lg shadow-lg z-50 font-medium">{toast}</div>}
     </div>
   );
@@ -370,7 +441,7 @@ function Disconnected({ onRetry }) {
 }
 
 function SideItem({ active, onClick, icon: Icon, label, badge }) {
-  return <button onClick={onClick} className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "bg-indigo-600/20 text-indigo-300 font-medium" : "hover:bg-slate-800 text-slate-300"}`}><Icon className="w-4 h-4" /><span>{label}</span>{badge > 0 && <span className="ml-auto text-[11px] bg-rose-500 text-white rounded-full px-1.5 py-0.5">{badge}</span>}</button>;
+  return <button onClick={onClick} className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "night-active text-indigo-300 font-medium" : "hover:bg-slate-800 text-slate-300"}`}><Icon className="w-4 h-4" /><span>{label}</span>{badge > 0 && <span className="ml-auto text-[11px] bg-rose-500 text-white rounded-full px-1.5 py-0.5">{badge}</span>}</button>;
 }
 
 function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefresh, post, fleetPause, lastPass, current, milestones, onGoApprovals, onResume }) {
@@ -379,7 +450,7 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
   // has completed recently AND nothing is in flight (or one app has hogged >95 min).
   const stepAge = lastPass ? (Date.now() - Date.parse(lastPass.at)) / 60000 : null;
   const curAge = current ? (Date.now() - Date.parse(current.since)) / 60000 : null;
-  const stalled = connected && !current && (stepAge === null || stepAge > 40);
+  const stalled = connected && !current && stepAge !== null && stepAge > 40;
   const hogging = connected && current && curAge > 95;
   return (
     <>
@@ -437,7 +508,7 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
                 else { dlabel = "Idle"; dl = LOOP_STATES.idle; }
               }
               return (
-                <div key={a.id} className="bg-slate-900 rounded-xl border border-slate-800 p-4 hover:border-slate-700 transition-colors flex flex-col">
+                <div key={a.id} className="night-card rounded-xl p-4 hover:border-slate-700 transition-colors flex flex-col">
                   <div className="flex items-start justify-between gap-2">
                     <button onClick={() => onOpen(a.id)} className="text-left"><div className="font-semibold tracking-tight hover:text-indigo-300">{a.name}</div><div className="text-xs text-slate-400 mt-0.5">{a.purpose}</div></button>
                     <Chip className={dl.chip}><span className={`w-1.5 h-1.5 rounded-full ${dl.dot} ${dlabel === "Working" ? "animate-pulse" : ""}`} />{dlabel}</Chip>
@@ -602,10 +673,214 @@ function TrustPanel({ flash }) {
   );
 }
 
+function SettingsPanel({ apps, fleet, flash, pull, setFleetConfig }) {
+  const [tab, setTab] = useState("agents");
+  const tabs = [
+    { id: "agents", label: "Agents & keys", icon: Key },
+    { id: "routing", label: "Routing", icon: Route },
+    { id: "limits", label: "Spend & limits", icon: Gauge },
+    { id: "schedule", label: "Schedule", icon: CalendarClock },
+    { id: "notifications", label: "Notifications", icon: BellRing },
+  ];
+  return (
+    <>
+      <Header title="Settings" subtitle="Agent access, per-app routing, spend caps, scheduler controls, and notifications" />
+      <div className="p-6 overflow-y-auto max-w-5xl">
+        <div className="flex flex-wrap gap-1 border-b border-slate-800 mb-5">
+          {tabs.map((t) => <Tab key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} icon={t.icon} label={t.label} />)}
+        </div>
+        {tab === "agents" && <ProvidersPanel flash={flash} embedded />}
+        {tab === "routing" && <RoutingSettings apps={apps} flash={flash} pull={pull} />}
+        {tab === "limits" && <FleetLimits fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
+        {tab === "schedule" && <FleetSchedule fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
+        {tab === "notifications" && <FleetNotifications fleet={fleet} flash={flash} setFleetConfig={setFleetConfig} />}
+      </div>
+    </>
+  );
+}
+
+function saveFleetConfig(patch, flash, setFleetConfig) {
+  return fetch(`${API}/api/fleet-config`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.ok) throw new Error(d.error || "save failed");
+      setFleetConfig?.(d.fleet);
+      flash("Settings saved");
+      return d.fleet;
+    })
+    .catch((e) => { flash(String(e.message || e)); throw e; });
+}
+
+function RoutingSettings({ apps, flash, pull }) {
+  const [providers, setProviders] = useState(null);
+  const [draft, setDraft] = useState({});
+  useEffect(() => { fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])); }, []);
+  useEffect(() => {
+    const next = {};
+    for (const app of apps) next[app.id] = {
+      providerId: app.config?.providerId || "",
+      providerModel: app.config?.providerModel || app.model || "",
+      reasoning: app.config?.reasoning || app.reasoning || "medium",
+      dailyUsd: app.config?.budget?.dailyUsd || "",
+      monthlyUsd: app.config?.budget?.monthlyUsd || "",
+    };
+    setDraft(next);
+  }, [apps]);
+  if (!providers) return <div className="p-10 text-slate-500">Loading routing…</div>;
+  const providerById = Object.fromEntries(providers.map((p) => [p.id, p]));
+  const update = (id, patch) => setDraft((d) => ({ ...d, [id]: { ...(d[id] || {}), ...patch } }));
+  const save = (app) => {
+    const d = draft[app.id] || {};
+    return fetch(`${API}/api/app-config`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ slug: app.id, providerId: d.providerId, providerModel: d.providerModel, reasoning: d.reasoning, budget: { dailyUsd: d.dailyUsd, monthlyUsd: d.monthlyUsd } }),
+    }).then((r) => r.json()).then((out) => {
+      if (!out.ok) throw new Error(out.error || "save failed");
+      flash(`${app.name}: routing saved`);
+      pull();
+    }).catch((e) => flash(`${app.name}: ${String(e.message || e)}`));
+  };
+  return (
+    <div className="space-y-3">
+      {apps.length === 0 && <EmptyPanel icon={Route} title="No apps to route yet" body="Add a project from the macOS menu bar first. Routing appears here as soon as the bridge has a real app config." />}
+      {apps.map((app) => {
+        const d = draft[app.id] || {};
+        const selected = providerById[d.providerId] || null;
+        return (
+          <div key={app.id} className="night-card rounded-xl p-4">
+            <div className="flex items-start gap-4 flex-wrap">
+              <div className="min-w-56 flex-1">
+                <div className="font-medium text-slate-100">{app.name}</div>
+                <div className="text-xs text-slate-500 mt-0.5 truncate">{app.repo}</div>
+              </div>
+              <label className="text-xs text-slate-500 min-w-48">Provider
+                <select value={d.providerId} onChange={(e) => {
+                  const p = providerById[e.target.value];
+                  update(app.id, { providerId: e.target.value, providerModel: p?.defaultModel || d.providerModel || "" });
+                }} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
+                  <option value="">Use legacy app adapter</option>
+                  {providers.map((p) => <option key={p.id} value={p.id}>{p.label}{p.connected ? "" : " (not connected)"}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-slate-500 min-w-48">Model
+                {selected?.models?.length ? (
+                  <select value={d.providerModel || selected.defaultModel || ""} onChange={(e) => update(app.id, { providerModel: e.target.value })} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
+                    {selected.defaultModel && <option value={selected.defaultModel}>{selected.defaultModel} (default)</option>}
+                    {selected.models.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                ) : (
+                  <input value={d.providerModel || ""} onChange={(e) => update(app.id, { providerModel: e.target.value })} placeholder={selected?.defaultModel || "provider default"} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" />
+                )}
+              </label>
+              <label className="text-xs text-slate-500 min-w-36">Reasoning
+                <select value={d.reasoning || "medium"} onChange={(e) => update(app.id, { reasoning: e.target.value })} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
+                  <option value="low">Fast</option><option value="medium">Balanced</option><option value="high">Deep</option>
+                </select>
+              </label>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-3 mt-3 items-end">
+              <label className="text-xs text-slate-500">Daily API cap
+                <input type="number" min="0" step="0.01" value={d.dailyUsd} onChange={(e) => update(app.id, { dailyUsd: e.target.value })} placeholder="No cap" className="mt-1 w-full rounded-lg px-2 py-2 text-sm" />
+              </label>
+              <label className="text-xs text-slate-500">Monthly API cap
+                <input type="number" min="0" step="0.01" value={d.monthlyUsd} onChange={(e) => update(app.id, { monthlyUsd: e.target.value })} placeholder="No cap" className="mt-1 w-full rounded-lg px-2 py-2 text-sm" />
+              </label>
+              <div className="flex items-center gap-3">
+                <button onClick={() => save(app)} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-3.5 h-3.5" />Save route</button>
+                {selected && !selected.connected && selected.auth !== "none-local" && <span className="text-xs text-amber-300">Connect this provider in Agents & keys before live runs.</span>}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FleetLimits({ fleet, flash, setFleetConfig }) {
+  const [draft, setDraft] = useState(() => fleet || {});
+  useEffect(() => { if (fleet) setDraft(fleet); }, [fleet]);
+  if (!draft) return <div className="p-10 text-slate-500">Loading limits…</div>;
+  const patch = (p) => setDraft((d) => ({ ...d, ...p }));
+  const save = () => saveFleetConfig(draft, flash, setFleetConfig);
+  return (
+    <div className="grid lg:grid-cols-2 gap-4">
+      <Section title="Scheduler capacity" hint="Saved immediately. Interval and concurrency are read when the bridge scheduler starts, so restart Fleet for those two to take effect.">
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Minutes" value={draft.intervalMinutes} onChange={(v) => patch({ intervalMinutes: v })} min="1" />
+          <NumberField label="Concurrent apps" value={draft.maxConcurrentLoops} onChange={(v) => patch({ maxConcurrentLoops: v })} min="1" />
+          <NumberField label="Max hours" value={draft.maxUnattendedHours} onChange={(v) => patch({ maxUnattendedHours: v })} min="1" />
+        </div>
+      </Section>
+      <Section title="Fleet API spend cap" hint="Raw-API providers only. Live scheduled work pauses when the cap is reached; CLI subscriptions are not metered here.">
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField label="Daily USD" value={draft.budget?.dailyUsd || ""} onChange={(v) => patch({ budget: { ...(draft.budget || {}), dailyUsd: v } })} min="0" step="0.01" />
+          <NumberField label="Monthly USD" value={draft.budget?.monthlyUsd || ""} onChange={(v) => patch({ budget: { ...(draft.budget || {}), monthlyUsd: v } })} min="0" step="0.01" />
+        </div>
+      </Section>
+      <div className="lg:col-span-2"><button onClick={save} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save limits</button></div>
+    </div>
+  );
+}
+
+function FleetSchedule({ fleet, flash, setFleetConfig }) {
+  const [quiet, setQuiet] = useState(fleet?.quietHours || { enabled: false, start: "22:00", end: "07:00" });
+  useEffect(() => { if (fleet?.quietHours) setQuiet(fleet.quietHours); }, [fleet]);
+  const save = () => saveFleetConfig({ quietHours: quiet }, flash, setFleetConfig);
+  return (
+    <div className="max-w-2xl">
+      <Section title="Quiet hours" hint="When enabled, the bridge skips scheduled sweeps during this local-time window. Manual Run buttons still work.">
+        <div className="flex items-center justify-between gap-4">
+          <div><div className="text-sm font-medium text-slate-100">Skip scheduled loops overnight</div><div className="text-xs text-slate-500 mt-0.5">Use this when you want morning review batches without unattended overnight changes.</div></div>
+          <ToggleSwitch on={quiet.enabled} onClick={() => setQuiet((q) => ({ ...q, enabled: !q.enabled }))} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <label className="text-xs text-slate-500">Start<input type="time" value={quiet.start} onChange={(e) => setQuiet((q) => ({ ...q, start: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
+          <label className="text-xs text-slate-500">End<input type="time" value={quiet.end} onChange={(e) => setQuiet((q) => ({ ...q, end: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" /></label>
+        </div>
+        <button onClick={save} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save schedule</button>
+      </Section>
+    </div>
+  );
+}
+
+function FleetNotifications({ fleet, flash, setFleetConfig }) {
+  const [draft, setDraft] = useState(fleet?.notifications || { desktop: true, webhook: "" });
+  useEffect(() => { if (fleet?.notifications) setDraft(fleet.notifications); }, [fleet]);
+  const save = () => saveFleetConfig({ notifications: draft }, flash, setFleetConfig);
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Section title="Desktop alerts" hint="Used for spend caps, auth pauses, and work that needs human attention.">
+        <div className="flex items-center justify-between">
+          <div><div className="text-sm font-medium">macOS notifications</div><div className="text-xs text-slate-500 mt-0.5">The bridge also writes notifications.log so alerts are not lost.</div></div>
+          <ToggleSwitch on={draft.desktop !== false} onClick={() => setDraft((d) => ({ ...d, desktop: d.desktop === false }))} />
+        </div>
+      </Section>
+      <Section title="Webhook" hint="Optional. If set, the runner posts notification JSON to this URL.">
+        <input value={draft.webhook || ""} onChange={(e) => setDraft((d) => ({ ...d, webhook: e.target.value }))} placeholder="https://…" className="w-full rounded-lg px-2.5 py-2 text-sm" />
+      </Section>
+      <button onClick={save} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save notifications</button>
+    </div>
+  );
+}
+
+function NumberField({ label, value, onChange, ...props }) {
+  return <label className="text-xs text-slate-500">{label}<input type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-lg px-2 py-2 text-sm" {...props} /></label>;
+}
+
+function ToggleSwitch({ on, onClick }) {
+  return <button type="button" onClick={onClick} className={`relative w-11 h-6 rounded-full border transition-colors ${on ? "bg-indigo-600 border-indigo-500" : "bg-slate-800 border-slate-700"}`} aria-pressed={on}><span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`} /></button>;
+}
+
+function EmptyPanel({ icon: Icon, title, body }) {
+  return <div className="text-center py-16 text-slate-500 night-card rounded-xl"><Icon className="w-10 h-10 mx-auto mb-3 text-slate-600" /><div className="font-medium text-slate-300">{title}</div><div className="text-sm mt-1 max-w-md mx-auto">{body}</div></div>;
+}
+
 // PROVIDERS & KEYS — connect a coding agent. Either a CLI you've signed into (Codex/Claude), or
 // a raw API key you bring (OpenAI/Anthropic/DeepSeek/Gemini/OpenRouter) or a local model (Ollama).
 // Keys are verified, then stored in the macOS Keychain — never written to a config/state file.
-function ProvidersPanel({ flash }) {
+function ProvidersPanel({ flash, embedded = false }) {
   const [data, setData] = useState(null);
   const [pending, setPending] = useState([]);
   const load = useCallback(() => {
@@ -616,10 +891,8 @@ function ProvidersPanel({ flash }) {
   if (!data) return <div className="p-10 text-slate-500">Loading providers…</div>;
   const clis = data.filter((p) => p.kind === "agentic-cli");
   const apis = data.filter((p) => p.kind === "api");
-  return (
-    <>
-      <Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />
-      <div className="p-6 overflow-y-auto max-w-3xl space-y-6">
+  const body = (
+      <div className={`${embedded ? "" : "p-6 overflow-y-auto max-w-3xl"} space-y-6`}>
         {pending.length > 0 && <SetupConsent pending={pending} flash={flash} reload={load} />}
         <div>
           <div className="text-sm font-semibold text-slate-300 mb-2">Coding agents (sign in with the CLI)</div>
@@ -631,8 +904,9 @@ function ProvidersPanel({ flash }) {
           <div className="space-y-2">{apis.map((p) => <ApiKeyCard key={p.id} p={p} flash={flash} reload={load} />)}</div>
         </div>
       </div>
-    </>
   );
+  if (embedded) return body;
+  return <><Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />{body}</>;
 }
 function CliCard({ p }) {
   return (
@@ -730,9 +1004,15 @@ function CostPanel() {
     <>
       <Header title="Cost" subtitle="What your API providers billed this month — CLI subscriptions aren't metered here" />
       <div className="p-6 overflow-y-auto max-w-3xl space-y-5">
-        <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+        <div className="grid sm:grid-cols-2 gap-3">
+        <div className="night-card rounded-xl p-5">
+          <div className="text-xs text-slate-400">Today</div>
+          <div className="text-3xl font-semibold text-cyan-300 mt-1">{usd(d.todayUsd)}</div>
+        </div>
+        <div className="night-card rounded-xl p-5">
           <div className="text-xs text-slate-400">This month</div>
           <div className="text-3xl font-semibold text-emerald-400 mt-1">{usd(d.monthUsd)}</div>
+        </div>
         </div>
         {d.monthUsd === 0 ? (
           <div className="text-center py-12 text-slate-500"><Wallet className="w-10 h-10 mx-auto mb-3 text-slate-600" /><div className="font-medium text-slate-300">No spend yet</div><div className="text-sm">When an app runs on a raw-API provider, its usage and cost show up here. Subscription CLIs (Codex, Claude) aren't billed per token.</div></div>
@@ -745,9 +1025,9 @@ function CostPanel() {
 }
 
 // ONBOARDING — the first-run welcome shown when no projects exist yet. Two honest steps:
-// connect a coding agent (live status from /api/providers), then add your first project (the
-// folder pick is a native menu action, so we point the user to it). Keeps the show-real-state law.
-function Onboarding({ onProviders }) {
+// connect a coding agent (live status from /api/providers), then add your first project through
+// the native folder picker. Keeps the show-real-state law.
+function Onboarding({ onProviders, onAddProject }) {
   const [providers, setProviders] = useState(null);
   useEffect(() => { fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])); }, []);
   const anyAgent = (providers || []).some((p) => p.connected);
@@ -780,7 +1060,8 @@ function Onboarding({ onProviders }) {
                 <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-slate-700 text-slate-300">2</span>
                 <span className="font-medium text-slate-200">Add your first project</span>
               </div>
-              <p className="text-sm text-slate-400 mt-2">Click the Fleet icon in your menu bar → <span className="text-slate-200 font-medium">Add Project…</span> and choose a folder that holds your code. Fleet always works on a private copy first, so nothing is ever at risk.</p>
+              <p className="text-sm text-slate-400 mt-2">Choose a folder that holds your code. Fleet detects the stack, writes the project into your real config, and starts from a private worktree when the repo is under git.</p>
+              <button onClick={onAddProject} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700"><FolderGit2 className="w-4 h-4" />Add project</button>
               <p className="text-xs text-slate-500 mt-2">Tip: keep projects out of Downloads — macOS restricts background access there.</p>
             </div>
           </div>
@@ -1000,6 +1281,149 @@ function ApprovalCard({ a, app, onResolve, onOpen }) {
   );
 }
 
+function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTask, onDeleteTask, onUpdateTask, onMoveTask }) {
+  const s = LOOP_STATES[app.loop] || LOOP_STATES.idle;
+  const done = app.tasks.filter((t) => t.status === "done").length;
+  const total = app.tasks.length;
+  const gates = app.conditions || [];
+  const gatesMet = gates.filter((g) => g.status === "met").length;
+  const reviewTasks = app.tasks.filter((t) => t.status === "review" || t.branch);
+  const tabs = [
+    { id: "now", label: "Now", icon: Activity },
+    { id: "gates", label: `Gates${gates.length ? ` ${gatesMet}/${gates.length}` : ""}`, icon: ShieldCheck },
+    { id: "runs", label: `Runs ${total}`, icon: ListChecks },
+    { id: "diff", label: `Diff${reviewTasks.length ? ` ${reviewTasks.length}` : ""}`, icon: FileDiff },
+    { id: "brain", label: "Brain", icon: Brain },
+  ];
+  return (
+    <div className="night-drawer" role="dialog" aria-modal="true" aria-label={`${app.name} cockpit`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="night-drawer-inner flex flex-col">
+        <div className="border-b border-slate-800 px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <button onClick={onClose} className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Fleet deck</button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-display text-2xl font-bold tracking-tight">{app.name}</h2>
+                <Chip className={s.chip}><span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />{s.label}</Chip>
+                <AutonomyChip a={app.autonomy} withLabel />
+                <Chip className="bg-slate-800 text-slate-400 border-slate-700"><Cpu className="w-3 h-3" />{app.config?.providerLabel || app.adapter || "agent"}{app.config?.providerModel ? ` · ${app.config.providerModel}` : ""}</Chip>
+              </div>
+              <p className="text-sm text-slate-400 mt-1 max-w-3xl">{app.purpose || app.stack || "No purpose recorded yet."}</p>
+              <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 min-w-0"><FolderGit2 className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{app.repo}</span></div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button onClick={() => onToggle(app.id)} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800">{app.loop === "running" ? <><Pause className="w-4 h-4" />Pause</> : <><Play className="w-4 h-4" />Run</>}</button>
+              <button onClick={onStop} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300"><Square className="w-4 h-4" />Stop</button>
+              <IconBtn onClick={onClose} title="Close" className="w-10 h-10"><X className="w-4 h-4" /></IconBtn>
+            </div>
+          </div>
+          <div className="flex gap-1 mt-4 overflow-x-auto">
+            {tabs.map((t) => <Tab key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} icon={t.icon} label={t.label} />)}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {tab === "now" && <AppNow app={app} done={done} total={total} gatesMet={gatesMet} gatesTotal={gates.length} />}
+          {tab === "gates" && (gates.length ? <div className="max-w-3xl night-card rounded-xl p-4"><GateChecklist app={app} post={post} /></div> : <EmptyPanel icon={ShieldCheck} title="No gates yet" body="This app is still in backlog mode. When tasks finish, the planner proposes a definition-of-done checklist here." />)}
+          {tab === "runs" && <Backlog app={app} onAddTask={onAddTask} onDeleteTask={onDeleteTask} onUpdateTask={onUpdateTask} onMoveTask={onMoveTask} />}
+          {tab === "diff" && <DiffTab app={app} reviewTasks={reviewTasks} />}
+          {tab === "brain" && <BrainTab app={app} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppNow({ app, done, total, gatesMet, gatesTotal }) {
+  const running = app.tasks.find((t) => t.status === "running");
+  const next = app.tasks.find((t) => t.status === "queued" && (t.deps || []).every((d) => (app.tasks.find((x) => x.id === d) || {}).status === "done"));
+  const human = app.tasks.filter((t) => t.status === "needs-human").length;
+  const review = app.tasks.filter((t) => t.status === "review" || t.branch).length;
+  return (
+    <div className="grid xl:grid-cols-[1.1fr_.9fr] gap-4">
+      <div className="space-y-4">
+        <div className="grid sm:grid-cols-4 gap-3">
+          <Stat icon={ListChecks} label="Tasks" value={`${done}/${total}`} sub="finished so far" tone="text-indigo-400" />
+          <Stat icon={ShieldCheck} label="Gates" value={gatesTotal ? `${gatesMet}/${gatesTotal}` : "—"} sub="definition of done" tone="text-emerald-400" />
+          <Stat icon={Inbox} label="Need you" value={human + review} sub="decisions + reviews" tone="text-violet-400" />
+          <Stat icon={Brain} label="Reasoning" value={app.reasoning || "medium"} sub={app.config?.providerModel || app.model || "provider default"} tone="text-cyan-400" />
+        </div>
+        <Section title="Current work" hint="Only live state from this app's backlog and loop log.">
+          {running ? <WorkSummary icon={Zap} title={`Working: ${running.title}`} body={running.ac || running.summary || "The loop is executing this task now."} /> :
+            next ? <WorkSummary icon={Circle} title={`Next up: ${next.title}`} body={next.ac || "Queued for the next sweep."} /> :
+            human ? <WorkSummary icon={Inbox} title="Waiting on your answer" body="Open Approvals from the sidebar to unblock this app." /> :
+            <WorkSummary icon={CircleCheck} title={total && done === total ? "Backlog complete" : "No ready work"} body={total && done === total ? "This app is ready for gate/audit mode." : "Queued tasks are blocked, paused, or not present yet."} />}
+        </Section>
+        <ActivityFeed app={app} />
+      </div>
+      <div className="space-y-4">
+        <Section title="Loop policy" hint="The guardrails this app runs under.">
+          <div className="flex flex-wrap gap-2"><AutonomyChip a={app.autonomy} withLabel /><Chip title={(DEPLOY_META[app.deployPolicy] || DEPLOY_META.none).hint} className="bg-slate-800 text-slate-400 border-slate-700"><Rocket className="w-3 h-3" />{(DEPLOY_META[app.deployPolicy] || DEPLOY_META.none).label}</Chip>{app.config?.providerLabel && <Chip className="bg-slate-800 text-slate-400 border-slate-700"><Server className="w-3 h-3" />{app.config.providerLabel}</Chip>}</div>
+          <div className="mt-3 text-xs text-slate-500">Stack: {app.stack || "not recorded"} · Retry cap: {app.config?.retryCap ?? app.retryCap ?? "default"}</div>
+        </Section>
+        <Section title="Live stream" hint="Raw agent output appears here during a run.">
+          <Stream app={app} />
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function WorkSummary({ icon: Icon, title, body }) {
+  return <div className="flex items-start gap-3"><div className="w-9 h-9 rounded-lg bg-indigo-500/15 text-indigo-300 flex items-center justify-center shrink-0"><Icon className="w-4 h-4" /></div><div><div className="text-sm font-medium text-slate-100">{title}</div><div className="text-sm text-slate-400 mt-1">{body}</div></div></div>;
+}
+
+function DiffTab({ app, reviewTasks }) {
+  const [selected, setSelected] = useState(reviewTasks[0]?.id || "");
+  const [detail, setDetail] = useState(null);
+  useEffect(() => { setSelected(reviewTasks[0]?.id || ""); }, [app.id, reviewTasks.length]);
+  useEffect(() => {
+    if (!selected) { setDetail(null); return; }
+    fetch(`${API}/api/approval?appId=${app.id}&taskId=${selected}`, { cache: "no-store" }).then((r) => r.json()).then(setDetail).catch(() => setDetail({ error: "Could not load diff." }));
+  }, [app.id, selected]);
+  if (!reviewTasks.length) return <EmptyPanel icon={FileDiff} title="No review branch yet" body="When the agent finishes code on a safe branch, the changed files and patch appear here from the real repository diff." />;
+  return (
+    <div className="grid lg:grid-cols-[260px_1fr] gap-4">
+      <div className="space-y-2">{reviewTasks.map((t) => <button key={t.id} onClick={() => setSelected(t.id)} className={`w-full text-left rounded-xl border p-3 ${selected === t.id ? "border-indigo-500 bg-indigo-600/10" : "border-slate-800 bg-slate-900 hover:border-slate-700"}`}><div className="text-sm font-medium">{t.title}</div><div className="text-[11px] text-slate-500 mt-1">{t.branch || t.status}</div></button>)}</div>
+      <div className="night-console rounded-xl p-4 min-h-80">
+        {!detail && <div className="text-slate-500">Loading diff…</div>}
+        {detail?.error && <div className="text-rose-400">{detail.error}</div>}
+        {detail && !detail.error && !detail.diff && <div className="text-slate-500">This review item has no branch diff available yet.</div>}
+        {detail?.diff?.stat && <><div className="text-xs text-slate-500 mb-2">Files changed</div><pre className="text-xs text-slate-300 whitespace-pre-wrap mb-4">{detail.diff.stat}</pre></>}
+        {detail?.diff?.patch && <><div className="text-xs text-slate-500 mb-2">Patch</div><pre className="text-[11px] text-slate-300 whitespace-pre-wrap overflow-auto" style={{ maxHeight: "62vh" }}>{detail.diff.patch}</pre></>}
+      </div>
+    </div>
+  );
+}
+
+function BrainTab({ app }) {
+  const [data, setData] = useState(null);
+  const [text, setText] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => fetch(`${API}/api/brain?appId=${app.id}`, { cache: "no-store" }).then((r) => r.json()).then((d) => { setData(d); setText(d.proposed || d.active || ""); }).catch(() => setData({ proposed: "", active: "" })), [app.id]);
+  useEffect(() => { load(); }, [load]);
+  const postBrain = (action, extra = {}) => {
+    setBusy(true);
+    fetch(`${API}/api/brain`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ slug: app.id, action, ...extra }) })
+      .then(() => load()).finally(() => setBusy(false));
+  };
+  if (!data) return <div className="text-slate-500">Loading project brain…</div>;
+  const body = data.proposed || data.active || "";
+  return (
+    <div className="space-y-4 max-w-4xl">
+      <Section title="Project brain" hint="The approved understanding is injected into every future run. Proposed updates wait for your review.">
+        <div className="flex items-center gap-2 flex-wrap mb-3"><Chip className="bg-indigo-500/10 text-indigo-300 border-indigo-500/30">status: {data.status || "none"}</Chip><Chip className="bg-slate-800 text-slate-400 border-slate-700">v{data.version || 0}</Chip>{data.proposed && <Chip className="bg-amber-500/10 text-amber-300 border-amber-500/30">review proposed update</Chip>}</div>
+        {body ? <textarea value={text} onChange={(e) => setText(e.target.value)} rows={18} className="w-full text-xs font-mono rounded-lg px-3 py-2" /> : <EmptyPanel icon={Brain} title="No brain written yet" body="The next live agent pass studies the project and proposes a brain here for review before it becomes trusted context." />}
+        {body && <div className="mt-3 flex gap-2 flex-wrap"><button disabled={busy || text.trim().length < 100} onClick={() => postBrain("approve", { editedText: text })} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><CheckCircle2 className="w-4 h-4" />Approve brain</button></div>}
+      </Section>
+      <Section title="Ask for re-analysis" hint="Your notes are saved in state; the fleet revises its understanding on the next pass.">
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="What did the current understanding miss or get wrong?" className="w-full text-sm rounded-lg px-3 py-2" />
+        <button disabled={busy || !notes.trim()} onClick={() => postBrain("refine", { notes })} className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"><RefreshCw className="w-4 h-4" />Request re-analysis</button>
+      </Section>
+    </div>
+  );
+}
+
 function AppDetail({ app, tab, setTab, post, onBack, onToggle, onStop, onAddTask, onDeleteTask, onUpdateTask, onMoveTask }) {
   const s = LOOP_STATES[app.loop] || LOOP_STATES.idle;
   return (
@@ -1206,14 +1630,14 @@ function ActivityFeed({ app }) {
 }
 
 function Header({ title, subtitle, right }) {
-  return <div className="border-b border-slate-800 bg-slate-900 px-6 h-14 flex items-center justify-between"><div className="min-w-0"><h1 className="text-lg font-semibold tracking-tight">{title}</h1>{subtitle && <div className="text-[11px] text-slate-500 -mt-0.5 truncate">{subtitle}</div>}</div><div className="shrink-0">{right}</div></div>;
+  return <div className="border-b border-slate-800 bg-slate-900 px-6 h-16 flex items-center justify-between"><div className="min-w-0"><h1 className="font-display text-xl font-bold tracking-tight">{title}</h1>{subtitle && <div className="text-[11px] text-slate-500 -mt-0.5 truncate">{subtitle}</div>}</div><div className="shrink-0">{right}</div></div>;
 }
 function LiveTag({ connected, updatedAt, onRefresh }) {
   return <button onClick={onRefresh} className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200"><span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400 animate-pulse" : "bg-amber-500"}`} />{connected ? "Live" : "Reconnecting"}{updatedAt && <span className="text-slate-600">· {updatedAt.toLocaleTimeString()}</span>}<RefreshCw className="w-3.5 h-3.5" /></button>;
 }
 function Stat({ icon: Icon, label, sub, value, tone, onClick }) {
   const Tag = onClick ? "button" : "div";
-  return <Tag onClick={onClick} className={`bg-slate-900 rounded-xl border border-slate-800 p-4 text-left ${onClick ? "hover:border-slate-600 cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none" : ""}`}>
+  return <Tag onClick={onClick} className={`night-card rounded-xl p-4 text-left ${onClick ? "hover:border-slate-600 cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none" : ""}`}>
     <div className="flex items-center justify-between"><span className="text-xs text-slate-400">{label}</span><Icon className={`w-4 h-4 ${tone}`} /></div>
     <div className={`text-2xl font-semibold mt-1 ${tone}`}>{value}</div>
     {sub && <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>}
@@ -1223,5 +1647,5 @@ function Tab({ active, onClick, icon: Icon, label }) {
   return <button onClick={onClick} className={`inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg transition-colors ${active ? "bg-white text-slate-900" : "text-slate-400 hover:bg-slate-800"}`}><Icon className="w-4 h-4" />{label}</button>;
 }
 function Section({ title, hint, children }) {
-  return <div className="bg-slate-900 rounded-xl border border-slate-800 p-4"><div className="font-medium text-sm">{title}</div>{hint && <div className="text-xs text-slate-500 mt-0.5 mb-3">{hint}</div>}{children}</div>;
+  return <div className="night-card rounded-xl p-4"><div className="font-medium text-sm">{title}</div>{hint && <div className="text-xs text-slate-500 mt-0.5 mb-3">{hint}</div>}{children}</div>;
 }

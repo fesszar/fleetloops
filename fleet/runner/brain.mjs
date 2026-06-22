@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, ren
 import { join } from "node:path";
 import { runExplainer } from "./adapters.mjs";
 import { expandHome, pushLog } from "./util.mjs";
+import { hasAgentProvider } from "./providers/registry.mjs";
 
 const HERE = new URL(".", import.meta.url);
 const COMPREHEND_TEMPLATE = (() => { try { return readFileSync(new URL("../prompts/comprehend-project.md", HERE), "utf8"); } catch { return ""; } })();
@@ -49,7 +50,7 @@ export function readBrain(app, { cap = 7000 } = {}) {
 // is a refinement, not a fresh guess. Returns the proposed text (or "" on failure).
 export async function comprehendProject(app, fleet, { notes = "", priorBrain = "" } = {}) {
   if (!COMPREHEND_TEMPLATE) return "";
-  if (!(app.agent?.adapter && app.agent.adapter !== "manual")) return "";
+  if (!hasAgentProvider(app)) return "";
   let prompt = COMPREHEND_TEMPLATE
     .replaceAll("{{APP_NAME}}", app.name)
     .replaceAll("{{STAGE}}", app.stage || "unknown")
@@ -132,7 +133,7 @@ export function extractBrain(raw) {
 // Never blocks: callers continue their normal work after this.
 export async function proposeBrainIfNeeded(app, fleet, state) {
   if (!fleet || fleet.brain === false) return { acted: false };
-  if (!(app.agent?.adapter && app.agent.adapter !== "manual")) return { acted: false };
+  if (!hasAgentProvider(app)) return { acted: false };
   if (hasApprovedBrain(app)) return { acted: false };
   const bs = brainStatus(state);
   if (bs === "pending") return { acted: false };       // already waiting on the owner

@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RepoAccess.resumeAllGrants()
         LoginItem.enableOnFirstRunIfNeeded()
 
+        dashboard.onAddProject = { [weak self] in self?.addProject() }
+
         wireMenu()
 
         EngineProcess.shared.onReady = { [weak self] port, token in
@@ -53,10 +55,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func addProject() {
         RepoAccess.promptForFolder { [weak self] url in
-            guard url != nil else { return }
-            // The web wizard takes it from here (detect stack, comprehension, autonomy).
-            self?.openDashboard()
+            guard let self = self, let url = url else { return }
+            guard let bridge = self.bridge else {
+                self.openDashboard()
+                self.showAddProjectError("Fleet service is still starting. Try again in a moment.")
+                return
+            }
+            bridge.postResult("/api/project", body: ["repo": url.path]) { [weak self] result in
+                guard let self = self else { return }
+                self.openDashboard()
+                if result.ok {
+                    self.dashboard.reload()
+                } else {
+                    self.showAddProjectError(result.message ?? "Fleet could not add that project.")
+                }
+            }
         }
+    }
+
+    private func showAddProjectError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Project not added"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private var isPaused = false

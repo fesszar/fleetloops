@@ -22,13 +22,15 @@ import { fileURLToPath } from "node:url";
 import { platform, homedir } from "node:os";
 import { loadConfig, loadState, saveState, runLoopOnce, readAllEscalations, mergeBranch, discardBranch, branchDiff, expandHome, STATE_DIR, CONFIG_FILE } from "./loop.mjs";
 import { runEvolvePass, ensureConditions, markConditionMet, addCondition, acceptSuggestion, dismissSuggestion, pendingHuman } from "./conditions.mjs";
-import { notify, pushLog, getFleetPause, clearFleetPause, acquireRunLock, releaseRunLock } from "./util.mjs";
+import { notify, pushLog, getFleetPause, setFleetPause, clearFleetPause, acquireRunLock, releaseRunLock } from "./util.mjs";
 import { recordCleanMerge, recordRejection } from "./autonomy.mjs";
 import { ensureToken, checkAuth, injectToken, allowedOrigins, pendingSetups, approveSetup } from "./security.mjs";
 import { listProviderStatus, validateApiKey } from "./providers/validate.mjs";
 import { getProvider } from "./providers/registry.mjs";
 import { setApiKey, deleteApiKey } from "./secrets.mjs";
 import { costSummary } from "./cost.mjs";
+import { applyAppConfigPatch, applyFleetConfigPatch, publicAppConfig, publicFleetConfig, isWithinQuietHours } from "./config-api.mjs";
+import { addProjectToConfig } from "./project-onboard.mjs";
 
 // An app is condition-driven if it DECLARES exitConditions (even an empty list — the planner
 // seeds those on the first live pass) or already has conditions in its state.
@@ -109,6 +111,7 @@ function buildState() {
       id: a.slug, name: a.name, purpose: a.purpose || a.northStar || "", stack: a.stack || "",
       stage: a.stage, repo: a.repo, loop: s.loop, autonomy: a.autonomy, deployPolicy: a.deployPolicy,
       reasoning: a.reasoning || "medium", model: a.model || "", adapter: a.agent?.adapter || "manual",
+      config: publicAppConfig(a, cfg.fleet),
       retryCap: a.retryCap ?? cfg.fleet.defaultRetryCap, triggers: a.triggers || [], schedule: a.schedule || "—",
       guardrails: a.guardrails || [], offLimits: a.offLimits || [], skills: a.skills || [],
       loopPhase: s.loopPhase || null,
@@ -153,7 +156,7 @@ function buildState() {
   for (const app of apps) for (const t of app.tasks) if (t.status === "done")
     milestones.push({ appId: app.id, appName: app.name, taskId: t.id, title: t.title, plainSummary: t.plainSummary || "", userImpact: t.userImpact || "", readiness: t.category === "readiness" });
   const pause = getFleetPause(STATE_DIR);
-  return { connected: true, apps, approvals, milestones, fleetPause: pause || null, lastPass: lastPass || null, fullPassAt, current, schedulerLive: schedulerLive, updatedAt: new Date().toISOString() };
+  return { connected: true, apps, approvals, milestones, fleet: publicFleetConfig(cfg.fleet), fleetPause: pause || null, lastPass: lastPass || null, fullPassAt, current, schedulerLive: schedulerLive, updatedAt: new Date().toISOString() };
 }
 // heartbeat: per-APP completions (a full 9-app pass with real agent runs can legitimately take
 // an hour+, so the full-pass clock alone cries wolf). `current` = what the tick is doing RIGHT
@@ -293,6 +296,11 @@ async function api(req, res, path) {
     return send(res, 200, costSummary(STATE_DIR));
   }
 
+  if (path === "/api/fleet-config" && req.method === "GET") {
+    const cfg = loadConfig();
+    return send(res, 200, { ok: true, fleet: publicFleetConfig(cfg.fleet), schedulerLive });
+  }
+
   if (path === "/api/approval" && req.method === "GET") {
     const q = new URL(req.url, "http://x").searchParams;
     const slug = q.get("appId"), taskId = q.get("taskId");
@@ -334,20 +342,50 @@ async function api(req, res, path) {
 
   const body = await readBody(req);
 
+  if (path === "/api/project" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const result = addProjectToConfig(cfg, body);
+      if (!result.ok) return send(res, result.status, { ok: false, error: result.error });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, {
+        ok: true,
+        app: {
+          id: result.app.slug,
+          name: result.app.name,
+          repo: result.app.repo,
+          stack: result.app.stack,
+          loop: result.app.loop,
+        },
+        git: result.isGit,
+        stack: result.det.stack,
+      });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
   if (path === "/api/app-config" && req.method === "POST") {
     // Live per-app tuning: reasoning strength (low|medium|high) + model. Written to
     // fleet.config.json (the source of truth, re-read every pass), so changes take effect on
     // the next sweep with no restart. Agent command interpolates {{REASONING}}/{{MODEL}}.
-    const { slug, reasoning, model } = body;
     try {
       const cfgPath = CONFIG_FILE; // honors FLEET_CONFIG (Application Support in the packaged app)
       const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
-      const app = cfg.apps.find((a) => a.slug === slug);
-      if (!app) return send(res, 404, { ok: false, error: "no such app" });
-      if (reasoning && ["low", "medium", "high"].includes(reasoning)) app.reasoning = reasoning;
-      if (typeof model === "string") { if (model.trim()) app.model = model.trim(); else delete app.model; }
+      const result = applyAppConfigPatch(cfg, body);
+      if (!result.ok) return send(res, result.status, { ok: false, error: result.error });
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
-      return send(res, 200, { ok: true, reasoning: app.reasoning, model: app.model || "" });
+      return send(res, 200, { ok: true, ...result.config });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/fleet-config" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const result = applyFleetConfigPatch(cfg, body);
+      if (!result.ok) return send(res, result.status, { ok: false, error: result.error });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, { ok: true, fleet: result.fleet, note: "saved" });
     } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
   }
 
@@ -606,9 +644,10 @@ function listen(port, triesLeft) {
   // defense layer 3 (origin + token are layers 1–2). The Swift app reads bridge.port + bridge.token
   // from the state dir to open the dashboard.
   server.listen(port, "127.0.0.1", () => {
-    BOUND_PORT = port;
-    try { writeFileSync(join(STATE_DIR, "bridge.port"), String(port)); } catch {}
-    console.log(`\n  FleetView bridge → http://127.0.0.1:${port}  (loopback only, token-protected)\n  (bookmark it — the dashboard reads live loop state and writes your approvals back)\n`);
+    const actualPort = Number(server.address()?.port || port);
+    BOUND_PORT = actualPort;
+    try { writeFileSync(join(STATE_DIR, "bridge.port"), String(actualPort)); } catch {}
+    console.log(`\n  FleetView bridge → http://127.0.0.1:${actualPort}  (loopback only, token-protected)\n  (bookmark it — the dashboard reads live loop state and writes your approvals back)\n`);
     startScheduler();
   });
 }
@@ -656,7 +695,31 @@ function startScheduler() {
       notify(STATE_DIR, "Fleet runtime budget reached", msg, { fleet: cfg0.fleet });
       return;
     }
-    await sweep(loadConfig());
+    const cfg = loadConfig();
+    if (isWithinQuietHours(cfg.fleet)) {
+      console.log(`[${new Date().toLocaleTimeString()}] sweep skipped (quiet hours)`);
+      return;
+    }
+    if (live && cfg.fleet?.budget) {
+      const spend = costSummary(STATE_DIR);
+      const dailyCap = Number(cfg.fleet.budget.dailyUsd || 0);
+      const monthlyCap = Number(cfg.fleet.budget.monthlyUsd || 0);
+      if (dailyCap > 0 && spend.todayUsd >= dailyCap) {
+        const msg = `Fleet daily API spend cap reached ($${spend.todayUsd} >= $${dailyCap}). Live work pauses until the cap is raised or tomorrow's spend window starts.`;
+        setFleetPause(STATE_DIR, msg);
+        notify(STATE_DIR, "Fleet spend cap reached", msg, { fleet: cfg.fleet });
+        console.log(msg);
+        return;
+      }
+      if (monthlyCap > 0 && spend.monthUsd >= monthlyCap) {
+        const msg = `Fleet monthly API spend cap reached ($${spend.monthUsd} >= $${monthlyCap}). Live work pauses until the cap is raised or next month starts.`;
+        setFleetPause(STATE_DIR, msg);
+        notify(STATE_DIR, "Fleet spend cap reached", msg, { fleet: cfg.fleet });
+        console.log(msg);
+        return;
+      }
+    }
+    await sweep(cfg);
     fullPassAt = new Date().toISOString();
     console.log(`[${new Date().toLocaleTimeString()}] sweep done ${live ? "(LIVE)" : "(dry-run)"}`);
   });

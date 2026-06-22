@@ -7,9 +7,10 @@ import WebKit
 //
 // Off-origin navigation is blocked: the only thing that should ever load here is our own
 // 127.0.0.1 dashboard. External links (provider key pages, docs) open in the user's real browser.
-final class WebViewController: NSWindowController, WKNavigationDelegate {
+final class WebViewController: NSWindowController, WKNavigationDelegate, WKScriptMessageHandler {
     private var webView: WKWebView!
     private var origin: String = ""
+    var onAddProject: (() -> Void)?
 
     convenience init() {
         let window = NSWindow(
@@ -24,11 +25,18 @@ final class WebViewController: NSWindowController, WKNavigationDelegate {
         self.init(window: window)
 
         let config = WKWebViewConfiguration()
+        let userContent = WKUserContentController()
+        userContent.add(self, name: "fleetAddProject")
+        config.userContentController = userContent
         let wv = WKWebView(frame: window.contentView!.bounds, configuration: config)
         wv.autoresizingMask = [.width, .height]
         wv.navigationDelegate = self
         window.contentView?.addSubview(wv)
         self.webView = wv
+    }
+
+    deinit {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetAddProject")
     }
 
     /// Load (or reload) the dashboard for the currently bound bridge.
@@ -42,6 +50,18 @@ final class WebViewController: NSWindowController, WKNavigationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func reload() {
+        webView.reload()
+    }
+
+    // MARK: WKScriptMessageHandler — native affordances requested by the dashboard.
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "fleetAddProject" {
+            onAddProject?()
+        }
     }
 
     // MARK: WKNavigationDelegate — confine navigation to our loopback origin.

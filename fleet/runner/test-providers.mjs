@@ -1,6 +1,6 @@
 // test-providers.mjs — unit tests for the multi-provider layer (no network, no state).
 // Run:  cd fleet/runner && node test-providers.mjs
-import { getProvider, resolveProvider, resolveModel, legacyAdapterToProvider, normalizeLevel } from "./providers/registry.mjs";
+import { getProvider, resolveProvider, resolveModel, legacyAdapterToProvider, normalizeLevel, hasAgentProvider } from "./providers/registry.mjs";
 import * as oai from "./providers/codec-openai.mjs";
 import * as ant from "./providers/codec-anthropic.mjs";
 import { computeUsd } from "./cost.mjs";
@@ -17,6 +17,8 @@ ok(resolveProvider({ agent: { adapter: "codex" } }).id === "codex", "legacy app.
 ok(resolveProvider({ provider: { id: "anthropic" } }).id === "anthropic", "new app.provider.id resolves a provider");
 ok(resolveModel({}, getProvider("openai")) === "gpt-5", "model falls back to provider default");
 ok(resolveModel({ provider: { model: "o4-mini" } }, getProvider("openai")) === "o4-mini", "app.provider.model wins");
+ok(hasAgentProvider({ provider: { id: "openai" } }), "raw API provider counts as a runnable agent source");
+ok(!hasAgentProvider({ agent: { adapter: "manual" } }), "manual adapter is not a runnable agent source");
 
 // --- reasoning mapping ------------------------------------------------------
 {

@@ -67,15 +67,17 @@ export function budgetExceeded(stateDir, app, now = new Date()) {
 // Roll the ledger up for the Cost dashboard: totals this month, per-app and per-phase splits.
 export function costSummary(stateDir, now = new Date()) {
   const recs = readRecords(stateDir);
-  const month = monthKey(now);
-  const out = { monthUsd: 0, byApp: {}, byPhase: {}, byProvider: {} };
+  const month = monthKey(now), today = dayKey(now);
+  const out = { monthUsd: 0, todayUsd: 0, byApp: {}, byPhase: {}, byProvider: {} };
   for (const r of recs) {
+    if (dayKey(r.at) === today) out.todayUsd += r.usd;
     if (monthKey(r.at) !== month) continue;
     out.monthUsd += r.usd;
     out.byApp[r.app] = +(((out.byApp[r.app] || 0) + r.usd)).toFixed(4);
     out.byPhase[r.phase] = +(((out.byPhase[r.phase] || 0) + r.usd)).toFixed(4);
     out.byProvider[r.provider] = +(((out.byProvider[r.provider] || 0) + r.usd)).toFixed(4);
   }
+  out.todayUsd = +out.todayUsd.toFixed(4);
   out.monthUsd = +out.monthUsd.toFixed(4);
   return out;
 }

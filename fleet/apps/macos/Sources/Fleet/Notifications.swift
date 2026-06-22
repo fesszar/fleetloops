@@ -8,14 +8,28 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifications()
 
     var onOpenDashboard: (() -> Void)?
-    private let center = UNUserNotificationCenter.current()
+    private let center: UNUserNotificationCenter?
+
+    override init() {
+        // SwiftPM runs the debug executable outside a real .app bundle. On current macOS builds,
+        // UserNotifications asserts in that mode before the dashboard can open.
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            center = UNUserNotificationCenter.current()
+        } else {
+            center = nil
+            NSLog("Fleet: notifications disabled outside an app bundle")
+        }
+        super.init()
+    }
 
     func requestAuthorization() {
+        guard let center = center else { return }
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
     func post(title: String, body: String, id: String = UUID().uuidString) {
+        guard let center = center else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

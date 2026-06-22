@@ -58,6 +58,10 @@ final class EngineProcess {
     /// running one.
     private func seedEngine() throws -> URL {
         guard let bundled = Paths.bundledEngine else {
+            if let dev = Paths.devEngineRoot {
+                NSLog("Fleet: using checkout engine at \(dev.path)")
+                return dev
+            }
             throw NSError(domain: "Fleet", code: 1, userInfo: [NSLocalizedDescriptionKey: "bundled engine not found in app"])
         }
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"

@@ -246,12 +246,12 @@ export async function runExplainer(app, prompt, { reasoning = "low", timeoutMs =
 }
 
 export function pickAdapter(app) {
-  const a = app.agent?.adapter || "manual";
-  if (a === "manual") return adapters.manual;
   // Provider-aware dispatch: a raw-API provider routes through the bundled harness; everything
   // else (Codex/Claude CLI/shell) keeps the verbatim shell path. resolveProvider also maps legacy
   // adapter:"codex"/"claude" configs, so existing fleets are unaffected.
   const provider = resolveProvider(app);
   if (provider && provider.kind === "api") return adapters.api;
+  const a = app.agent?.adapter || "manual";
+  if (a === "manual") return adapters.manual;
   return adapters.shell; // claude/codex/shell all run through the shell adapter
 }

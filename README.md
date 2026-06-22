@@ -4,7 +4,7 @@ Fleet points a coding agent at your projects and drives each one toward "done" o
 
 Built by **Gideon Awolesi**. MIT-licensed.
 
-> Status: research preview. The engine and dashboard are complete and covered by 195 passing tests; the macOS shell compiles and runs. Notarized distribution requires your own Apple Developer ID (see below).
+> Status: production-ready direct DMG. The redesigned dashboard, local bridge, project onboarding flow, runner, and macOS shell are covered by 224 passing runner checks plus web, Swift release, bridge-flow, signing, notarization, stapling, Gatekeeper, and DMG verification.
 
 ## What it does
 
@@ -42,7 +42,7 @@ Run the test suite (no network, no dependencies):
 
 ```bash
 cd fleet/runner
-for t in test-providers test-harness test-security test-config test-loop test-conditions test-integration; do
+for t in test-bridge-project test-bridge-run test-conditions test-harness test-security test-loop test-integration test-providers test-config; do
   FLEET_STATE_DIR=$(mktemp -d) node $t.mjs
 done
 ```
@@ -58,13 +58,42 @@ bash fleet/web/build.sh
 ```bash
 cd fleet/apps/macos
 swift run                  # dev: menu-bar app + engine
-# or a signed, notarized build (needs your Apple Developer ID):
+
+# signed, notarized direct-distribution build:
 export DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="fleet-notary"
 ./build-app.sh             # → build/Fleet.app and build/Fleet.dmg
 ```
 
 See `fleet/apps/macos/README.md` for the full native architecture (engine supervisor, Keychain, security-scoped folder bookmarks, login item, notifications) and the entitlements rationale.
+
+## Production verification
+
+The current direct DMG build has been verified with:
+
+```bash
+bash fleet/web/build.sh
+cd fleet/runner
+for t in test-bridge-project test-bridge-run test-conditions test-harness test-security test-loop test-integration test-providers test-config; do
+  FLEET_STATE_DIR=$(mktemp -d) node $t.mjs
+done
+cd ../apps/macos
+swift build -c release
+./build-app.sh
+codesign --verify --deep --strict --verbose=2 build/Fleet.app
+spctl -a -t exec -vv build/Fleet.app
+stapler validate build/Fleet.app
+stapler validate build/Fleet.dmg
+hdiutil verify build/Fleet.dmg
+```
+
+`build/Fleet.dmg` is the direct installer artifact for public distribution.
+
+## Contributing
+
+Fleet is open source so builders can fork it, inspect the architecture, open issues, and send PRs. Start with `CONTRIBUTING.md`, keep product changes wired to real state or APIs, and run the test suite above before opening a pull request.
+
+Please keep attribution to **Gideon Awolesi** in forks and derivative work, as described in `NOTICE`.
 
 ## Security model (summary)
 

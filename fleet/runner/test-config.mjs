@@ -1,12 +1,18 @@
 // test-config.mjs — provider status, key validation, and cost metering (the Providers/Cost UI backend).
 // Run:  cd fleet/runner && FLEET_STATE_DIR=$(mktemp -d) node test-config.mjs
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { listProviderStatus, validateApiKey } from "./providers/validate.mjs";
 import { recordCost, costSummary, spendForApp, budgetExceeded, computeUsd } from "./cost.mjs";
+import { applyAppConfigPatch, applyFleetConfigPatch, isWithinQuietHours, publicFleetConfig } from "./config-api.mjs";
+import { addProjectToConfig } from "./project-onboard.mjs";
 
 if (!process.env.FLEET_STATE_DIR) { console.error("Run with FLEET_STATE_DIR=$(mktemp -d)."); process.exit(1); }
 const SD = process.env.FLEET_STATE_DIR;
 if (!existsSync(SD)) mkdirSync(SD, { recursive: true });
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? "  ok: " : "  FAIL: ") + m); };
 
 // --- provider status list ---------------------------------------------------
@@ -46,6 +52,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
   recordCost(SD, { app: "beta", phase: "task", provider: "deepseek", model: "deepseek-chat", usage: { inputTokens: 1e6, outputTokens: 1e6 }, usd: 1.37 });
   const sum = costSummary(SD);
   ok(Math.abs(sum.monthUsd - (11.25 + 1.13 + 1.37)) < 0.01, "costSummary totals the month");
+  ok(Math.abs(sum.todayUsd - (11.25 + 1.13 + 1.37)) < 0.01, "costSummary totals today");
   ok(Math.abs(sum.byApp.acme - 12.38) < 0.01, "costSummary splits by app");
   ok(sum.byPhase.review > 0 && sum.byPhase.task > 0, "costSummary splits by phase");
   const acme = spendForApp(SD, "acme");
@@ -56,6 +63,67 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
   ok(!under.exceeded, "budgetExceeded stays calm under the cap");
   const nocap = budgetExceeded(SD, { slug: "acme" });
   ok(!nocap.exceeded, "no cap configured → never exceeded");
+}
+
+// --- project onboarding helpers + CLI config path --------------------------
+{
+  const repo = join(SD, "node-project");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "vite build" } }));
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
+  spawnSync("git", ["config", "user.name", "Tests"], { cwd: repo });
+  spawnSync("git", ["add", "-A"], { cwd: repo });
+  spawnSync("git", ["commit", "-qm", "base"], { cwd: repo });
+
+  const cfg = { fleet: { defaultRetryCap: 2 }, apps: [] };
+  const r = addProjectToConfig(cfg, { repo });
+  ok(r.ok && cfg.apps.length === 1, "project onboarding writes one app into config");
+  ok(cfg.apps[0].stack === "node" && cfg.apps[0].commands.test === "npm test --silent", "project onboarding detects node test/build commands");
+  ok(cfg.apps[0].loop === "running" && cfg.apps[0].vcs === "git", "git projects start runnable");
+  ok(existsSync(join(repo, ".fleet", "setup.sh")) && existsSync(join(repo, ".fleet", "env.sh")), "git projects get test-environment scaffolding");
+  ok(readFileSync(join(repo, ".gitignore"), "utf8").includes(".fleet/test.db"), "gitignore protects Fleet local test artifacts");
+  const dup = addProjectToConfig(cfg, { repo });
+  ok(!dup.ok && dup.status === 409, "duplicate project path is rejected");
+
+  const repo2 = join(SD, "other", "node-project");
+  mkdirSync(repo2, { recursive: true });
+  writeFileSync(join(repo2, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+  const r2 = addProjectToConfig(cfg, { repo: repo2 });
+  ok(r2.ok && r2.app.slug === "node-project-2", "auto-generated slugs stay unique");
+  ok(r2.app.loop === "paused" && r2.app.vcs === "none", "non-git projects are added paused instead of pretending live work is safe");
+
+  const cliRepo = join(SD, "cli-project");
+  mkdirSync(cliRepo, { recursive: true });
+  writeFileSync(join(cliRepo, "Package.swift"), "// swift package marker\n");
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: cliRepo });
+  const cfgPath = join(SD, "cli-fleet.config.json");
+  writeFileSync(cfgPath, JSON.stringify({ fleet: { defaultRetryCap: 2 }, apps: [] }));
+  const cli = spawnSync(process.execPath, ["fleet.mjs", "onboard", "swiftapp", "--repo", cliRepo, "--name", "Swift App"], {
+    cwd: HERE,
+    env: { ...process.env, FLEET_CONFIG: cfgPath, FLEET_STATE_DIR: SD },
+    encoding: "utf8",
+  });
+  const cliCfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+  ok(cli.status === 0 && cliCfg.apps[0]?.slug === "swiftapp" && cliCfg.apps[0]?.stack === "swift", "CLI onboard honors FLEET_CONFIG and shared stack detection");
+}
+
+// --- bridge config patch helpers -------------------------------------------
+{
+  const cfg = { fleet: { defaultRetryCap: 2 }, apps: [{ slug: "acme", name: "Acme", agent: { adapter: "manual" } }] };
+  const r = applyAppConfigPatch(cfg, { slug: "acme", providerId: "openai", providerModel: "gpt-5-mini", reasoning: "high", budget: { dailyUsd: 12 } });
+  ok(r.ok && cfg.apps[0].provider.id === "openai", "app-config stores provider id");
+  ok(cfg.apps[0].provider.model === "gpt-5-mini" && cfg.apps[0].model === "gpt-5-mini", "app-config stores provider model + legacy model fallback");
+  ok(cfg.apps[0].reasoning === "high", "app-config stores reasoning");
+  ok(cfg.apps[0].budget.dailyUsd === 12, "app-config stores per-app spend cap");
+  const bad = applyAppConfigPatch(cfg, { slug: "acme", providerId: "missing" });
+  ok(!bad.ok && bad.status === 400, "app-config rejects unknown providers");
+
+  const f = applyFleetConfigPatch(cfg, { intervalMinutes: 2, maxConcurrentLoops: 4, maxUnattendedHours: 36, notifications: { desktop: false }, budget: { dailyUsd: 25, monthlyUsd: 200, alertPct: 70 }, quietHours: { enabled: true, start: "22:00", end: "07:00" } });
+  ok(f.ok && cfg.fleet.intervalMinutes === 2 && cfg.fleet.maxConcurrentLoops === 4, "fleet-config stores scheduler knobs");
+  ok(publicFleetConfig(cfg.fleet).notifications.desktop === false, "fleet-config stores notification preference");
+  ok(isWithinQuietHours(cfg.fleet, new Date("2026-06-22T23:00:00")) && isWithinQuietHours(cfg.fleet, new Date("2026-06-22T06:30:00")), "quiet hours handle overnight windows");
+  ok(!isWithinQuietHours(cfg.fleet, new Date("2026-06-22T12:00:00")), "quiet hours allow daytime windows");
 }
 
 console.log(`\nconfig: ${pass} passed, ${fail} failed`);

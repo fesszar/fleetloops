@@ -17,10 +17,17 @@ notifications.log
 .env.*
 *.pem
 *.key
+*.p8
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
 
 # --- macOS app build artifacts ---
 fleet/apps/macos/.build/
 fleet/apps/macos/build/
+*.app/
+*.dmg
 *.xcuserstate
 DerivedData/
 
@@ -35,3 +42,11 @@ npm-debug.log*
 *.swp
 .idea/
 .vscode/
+
+# --- handover / local helper files (not part of the public product) ---
+HANDOVER.md
+PUBLISH-FLEET-TO-GITHUB.command
+memory.md
+.fleet/
+dsfbvnb.zip
+docs/IMPLEMENTATION-PLAN.md

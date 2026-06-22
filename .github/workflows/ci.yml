@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build dashboard
+        run: bash fleet/web/build.sh
+
+      - name: Run runner tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd fleet/runner
+          for t in test-bridge-project test-bridge-run test-conditions test-harness test-security test-loop test-integration test-providers test-config; do
+            state_dir="$(mktemp -d)"
+            FLEET_STATE_DIR="$state_dir" node "$t.mjs"
+            rm -rf "$state_dir"
+          done
+
+      - name: Build macOS shell
+        run: cd fleet/apps/macos && swift build -c release

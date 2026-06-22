@@ -43,6 +43,19 @@ enum Paths {
         Bundle.main.url(forResource: "app", withExtension: nil)
     }
 
+    /// Source checkout engine root used by `swift run`, which has no bundled resources.
+    static var devEngineRoot: URL? {
+        let src = URL(fileURLWithPath: #filePath)
+        let root = src
+            .deletingLastPathComponent() // Fleet
+            .deletingLastPathComponent() // Sources
+            .deletingLastPathComponent() // macos
+            .deletingLastPathComponent() // apps
+            .deletingLastPathComponent() // fleet
+        let server = root.appendingPathComponent("runner/bridge-server.mjs")
+        return fm.fileExists(atPath: server.path) ? root : nil
+    }
+
     static var bridgePortFile: URL { stateDir.appendingPathComponent("bridge.port") }
     static var bridgeTokenFile: URL { stateDir.appendingPathComponent("bridge.token") }
 }

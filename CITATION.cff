@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use Fleet in public work, please cite or attribute the project."
+title: "Fleet"
+authors:
+  - family-names: "Awolesi"
+    given-names: "Gideon"
+license: "MIT"
+repository-code: "https://github.com/fesszar/fleetloops"
+date-released: "2026-06-22"

@@ -31,6 +31,7 @@ import { effectiveAutonomy, recordCleanMerge, requiresHumanSignoff } from "./aut
 import { harvestNewTasks } from "./planner.mjs";
 import { readBrain, recordLearnings, proposeBrainIfNeeded } from "./brain.mjs";
 import { recordCost, budgetExceeded } from "./cost.mjs";
+import { hasAgentProvider, resolveProvider, resolveModel } from "./providers/registry.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dir, "..");
@@ -77,7 +78,7 @@ function validBrief(b) { return !!(b && typeof b.what === "string" && b.what.tri
 
 // Generate (at most one per pass, cached) an AI brief for a decision that has none.
 async function ensureOneBrief(app, fleet, state) {
-  const isAgent = app.agent?.adapter && app.agent.adapter !== "manual";
+  const isAgent = hasAgentProvider(app);
   if (!isAgent) return;
   const cfg = Object.fromEntries((app.backlog || []).map((t) => [t.id, t]));
   const t = (state.backlog || []).find((x) =>
@@ -421,13 +422,21 @@ function infraSetback(state, task, reason, fleet) {
 export async function runLoopOnce(app, fleet, { dryRun = true, internal = false } = {}) {
   const state = loadState(app, fleet);
 
-  // Fleet-wide pause (e.g. the agent CLI's login expired). Auto-expires after
-  // fleet.authPauseHours (default 4) so one fixed login doesn't need a manual resume.
+  // Fleet-wide pause. Auth/quota pauses auto-expire after fleet.authPauseHours; spend-cap
+  // pauses expire on the matching calendar boundary so a fixed login and a fixed budget behave
+  // differently instead of both waking after four hours.
   if (!dryRun) {
     const pause = getFleetPause(STATE_DIR);
     if (pause) {
+      const reason = String(pause.reason || "");
+      const now = new Date();
+      const at = pause.at ? new Date(pause.at) : now;
+      const isDailyBudget = /daily API spend cap/i.test(reason);
+      const isMonthlyBudget = /monthly API spend cap/i.test(reason);
+      const sameDay = at.toISOString().slice(0, 10) === now.toISOString().slice(0, 10);
+      const sameMonth = at.toISOString().slice(0, 7) === now.toISOString().slice(0, 7);
       const ageH = (Date.now() - Date.parse(pause.at || 0)) / 3600000;
-      if (ageH < (fleet.authPauseHours || 4)) {
+      if ((isDailyBudget && sameDay) || (isMonthlyBudget && sameMonth) || (!isDailyBudget && !isMonthlyBudget && ageH < (fleet.authPauseHours || 4))) {
         return { slug: app.slug, action: "fleet-paused", reason: pause.reason };
       }
       clearFleetPause(STATE_DIR); // expired — try again
@@ -478,7 +487,7 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
   // needs-human task selected directly => make sure it's explained, then escalate (don't run).
   if (task.status === "needs-human" || task.difficulty === "needs-human-decision") {
     const cfgBrief = (app.backlog?.find((x) => x.id === task.id) || {}).decisionBrief;
-    const isAgentNow = app.agent?.adapter && app.agent.adapter !== "manual";
+    const isAgentNow = hasAgentProvider(app);
     if (!validBrief(task.decisionBrief) && !validBrief(cfgBrief) && !dryRun && isAgentNow && (task._briefTries || 0) < 3) {
       if (task.decisionBrief && !validBrief(task.decisionBrief)) delete task.decisionBrief;
       task._briefTries = (task._briefTries || 0) + 1;
@@ -517,7 +526,7 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
 
   const repoPath = expandHome(app.repo);
   const branch = branchFor(app, task);
-  const isAgent = (app.agent?.adapter && app.agent.adapter !== "manual");
+  const isAgent = hasAgentProvider(app);
   if (!dryRun && isAgent) {
     const wt = setupWorktree(repoPath, app.slug, task, branch, app);
     if (!wt.ok) {
@@ -535,7 +544,12 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
   const agentApp = (!dryRun && isAgent && task.worktree) ? { ...app, repo: task.worktree } : app;
   const { report, failure, usage } = await adapter({ app: agentApp, fleet, prompt, dryRun, logFile: join(STATE_DIR, `${app.slug}.run.log`) });
   // Meter spend for raw-API providers (the harness returns `usage`; CLIs don't). Best-effort.
-  if (usage && !dryRun) { try { recordCost(STATE_DIR, { app: app.slug, phase: "task", provider: app.provider?.id, model: app.provider?.model || app.model, usage, usd: usage.usd }); } catch {} }
+  if (usage && !dryRun) {
+    try {
+      const provider = resolveProvider(app);
+      recordCost(STATE_DIR, { app: app.slug, phase: "task", provider: provider?.id, model: resolveModel(app, provider), usage, usd: usage.usd });
+    } catch {}
+  }
 
   // Commit the agent's changes onto the work branch, INSIDE the worktree (its own index).
   if (!dryRun && isAgent && task.worktree) {

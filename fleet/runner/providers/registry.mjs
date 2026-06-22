@@ -124,3 +124,9 @@ export function resolveProvider(app) {
 export function resolveModel(app, provider) {
   return app?.provider?.model || app?.model || provider?.defaultModel || "";
 }
+
+export function hasAgentProvider(app) {
+  const provider = resolveProvider(app);
+  if (provider && provider.kind === "api") return true;
+  return !!(app?.agent?.adapter && app.agent.adapter !== "manual");
+}

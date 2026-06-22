@@ -29,6 +29,7 @@ import { runExplainer } from "./adapters.mjs";
 import { execAsync, pushLog, ensureRepoSetup, withRepoEnv } from "./util.mjs";
 import { seedConditions, discoveryPass } from "./planner.mjs";
 import { brainStatus, hasApprovedBrain, proposeBrainIfNeeded } from "./brain.mjs";
+import { hasAgentProvider } from "./providers/registry.mjs";
 
 const EFFORT_RANK = { S: 0, M: 1, L: 2 };
 const DEFAULT_TRIES = 3;            // tries before a gate is marked stuck (then: backoff retries)
@@ -198,7 +199,7 @@ export async function runEvolvePass(app, fleet, { dryRun = true } = {}) {
   // definition of done. Apps already in progress get a one-time brain proposal in the
   // BACKGROUND and keep working (no freeze). Shared helper → identical behavior to the backlog
   // loop, so EVERY app gets a brain.
-  const isAgentApp = app.agent?.adapter && app.agent.adapter !== "manual";
+  const isAgentApp = hasAgentProvider(app);
   const onboarding = !state0.conditions.length;
   if (!dryRun && isAgentApp && !hasApprovedBrain(app)) {
     const before = brainStatus(state0);
@@ -215,7 +216,7 @@ export async function runEvolvePass(app, fleet, { dryRun = true } = {}) {
   // NO GATES YET → the planner seeds the starting definition of done (read-only pass).
   // v1 returned "needs-seeding" forever; now seeding is the loop's own job.
   if (!state0.conditions.length) {
-    if (dryRun || !(app.agent?.adapter && app.agent.adapter !== "manual")) {
+    if (dryRun || !isAgentApp) {
       return { slug: app.slug, action: "needs-seeding", reason: "no exit conditions yet — run live with an agent adapter so the planner can propose them" };
     }
     let proposed = [];

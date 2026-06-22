@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Info.plist for Fleet.app. LSUIElement makes it a menu-bar-only agent (no Dock icon, no
-     main menu). build-app.sh copies this into Fleet.app/Contents/Info.plist and stamps the
+<!-- Info.plist for FleetLoops.app. LSUIElement makes it a menu-bar-only agent (no Dock icon, no
+     main menu). build-app.sh copies this into FleetLoops.app/Contents/Info.plist and stamps the
      version. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Fleet</string>
+    <string>FleetLoops</string>
     <key>CFBundleDisplayName</key>
-    <string>Fleet</string>
+    <string>FleetLoops</string>
     <key>CFBundleIdentifier</key>
-    <string>com.fleet.app</string>
+    <string>com.fleetloops.app</string>
     <key>CFBundleExecutable</key>
     <string>Fleet</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
@@ -36,11 +36,11 @@
     </dict>
 
     <key>NSHumanReadableCopyright</key>
-    <string>© Fleet</string>
+    <string>© FleetLoops</string>
 
     <!-- Sparkle auto-update appcast (filled in for real at release). -->
     <key>SUFeedURL</key>
-    <string>https://updates.fleet.app/appcast.xml</string>
+    <string>https://updates.fleetloops.app/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY</string>
 </dict>

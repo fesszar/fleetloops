@@ -6,39 +6,45 @@ import Foundation
 // bundle is read-only and code-signed, but the engine writes worktrees, logs and state, and on
 // some macOS configurations spawning a node that lives inside a translocated/quarantined bundle
 // is unreliable. So on launch we copy the bundled engine to ~/.fleet/app/<version> and run it
-// from there. All mutable state lives under Application Support/Fleet.
+// from there. All mutable state lives under Application Support/FleetLoops.
 enum Paths {
     static let fm = FileManager.default
 
-    /// ~/Library/Application Support/Fleet
+    /// ~/Library/Application Support/FleetLoops
     static var appSupport: URL {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("Fleet", isDirectory: true)
+        let dir = base.appendingPathComponent("FleetLoops", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    /// ~/Library/Application Support/Fleet/state  (FLEET_STATE_DIR — bridge.port, bridge.token, *.json)
+    /// ~/Library/Application Support/FleetLoops/state  (FLEET_STATE_DIR — bridge.port, bridge.token, *.json)
     static var stateDir: URL {
         let d = appSupport.appendingPathComponent("state", isDirectory: true)
         try? fm.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
 
-    /// ~/Library/Application Support/Fleet/fleet.config.json  (FLEET_CONFIG — the user's apps)
+    /// ~/Library/Application Support/FleetLoops/fleet.config.json  (FLEET_CONFIG — the user's apps)
     static var configFile: URL {
         appSupport.appendingPathComponent("fleet.config.json")
     }
 
-    /// ~/.fleet/app — where the engine is seeded so it can run read-write outside the bundle.
+    /// ~/.fleetloops/app — where the engine is seeded so it can run read-write outside the bundle.
     static var seedRoot: URL {
         let home = fm.homeDirectoryForCurrentUser
-        let d = home.appendingPathComponent(".fleet/app", isDirectory: true)
+        let d = home.appendingPathComponent(".fleetloops/app", isDirectory: true)
         try? fm.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
 
-    /// The engine sources bundled inside the app: Fleet.app/Contents/Resources/app
+    /// Old public-beta Fleet config. Read-only migration source; never opened silently.
+    static var oldFleetConfigFile: URL {
+        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return base.appendingPathComponent("Fleet", isDirectory: true).appendingPathComponent("fleet.config.json")
+    }
+
+    /// The engine sources bundled inside the app: FleetLoops.app/Contents/Resources/app
     static var bundledEngine: URL? {
         Bundle.main.url(forResource: "app", withExtension: nil)
     }

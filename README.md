@@ -62,7 +62,7 @@ swift run                  # dev: menu-bar app + engine
 # signed, notarized direct-distribution build:
 export DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="fleet-notary"
-./build-app.sh             # → build/Fleet.app and build/Fleet.dmg
+./build-app.sh             # → build/FleetLoops.app and build/FleetLoops.dmg
 ```
 
 See `fleet/apps/macos/README.md` for the full native architecture (engine supervisor, Keychain, security-scoped folder bookmarks, login item, notifications) and the entitlements rationale.
@@ -80,18 +80,18 @@ done
 cd ../apps/macos
 swift build -c release
 ./build-app.sh
-codesign --verify --deep --strict --verbose=2 build/Fleet.app
-spctl -a -t exec -vv build/Fleet.app
-stapler validate build/Fleet.app
-stapler validate build/Fleet.dmg
-hdiutil verify build/Fleet.dmg
+codesign --verify --deep --strict --verbose=2 build/FleetLoops.app
+spctl -a -t exec -vv build/FleetLoops.app
+stapler validate build/FleetLoops.app
+stapler validate build/FleetLoops.dmg
+hdiutil verify build/FleetLoops.dmg
 ```
 
-`build/Fleet.dmg` is the direct installer artifact for public distribution.
+`build/FleetLoops.dmg` is the direct installer artifact for public distribution.
 
 ## Contributing
 
-Fleet is open source so builders can fork it, inspect the architecture, open issues, and send PRs. Start with `CONTRIBUTING.md`, keep product changes wired to real state or APIs, and run the test suite above before opening a pull request.
+FleetLoops is open source so builders can fork it, inspect the architecture, open issues, and send PRs. Start with `CONTRIBUTING.md`, keep product changes wired to real state or APIs, and run the test suite above before opening a pull request.
 
 Please keep attribution to **Gideon Awolesi** in forks and derivative work, as described in `NOTICE`.
 

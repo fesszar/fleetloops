@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, chmodSync, copyFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { expandHome } from "./util.mjs";
+import { getProvider } from "./providers/registry.mjs";
 
 const cleanString = (v) => String(v || "").trim();
 
@@ -90,19 +92,67 @@ export CI=1
   }
 }
 
-export function makeProjectConfig({ slug, name, repo, northStar }, det, isGit) {
+function normalizeProvider(opts = {}) {
+  const id = cleanString(opts.providerId || opts.provider?.id);
+  const provider = id ? getProvider(id) : null;
+  if (id && !provider) return { error: `unknown provider '${id}'` };
+  const model = cleanString(opts.providerModel || opts.model || opts.provider?.model);
+  const out = {};
+  if (provider) out.provider = { id: provider.id, ...(model ? { model } : {}) };
+  if (model) out.model = model;
+  return out;
+}
+
+function normalizePolicy(value, fallback, allowed) {
+  const v = cleanString(value);
+  return allowed.includes(v) ? v : fallback;
+}
+
+export function normalizeGateDraft(gates = []) {
+  return (Array.isArray(gates) ? gates : [])
+    .filter((g) => g && g.enabled !== false && cleanString(g.say || g.text || g.title))
+    .slice(0, 30)
+    .map((g, i) => {
+      const prov = cleanString(g.prov || g.provenance || "").toLowerCase();
+      const check = ["auto", "agent", "human"].includes(g.check) ? g.check
+        : prov === "owner" ? "human"
+        : prov === "shared" ? "agent"
+        : prov === "self" || prov === "loop" ? "auto"
+        : "agent";
+      const effort = ["S", "M", "L"].includes(g.effort) ? g.effort : "M";
+      return {
+        id: cleanString(g.id) || `gate-${i + 1}`,
+        say: cleanString(g.say || g.text || g.title).slice(0, 220),
+        check,
+        probe: cleanString(g.probe),
+        effort,
+        source: cleanString(g.source) || "onboarding",
+      };
+    });
+}
+
+export function makeProjectConfig({ slug, name, repo, northStar }, det, isGit, opts = {}) {
+  const providerPatch = normalizeProvider(opts);
+  if (providerPatch.error) throw new Error(providerPatch.error);
+  const startPaused = opts.startPaused !== false;
+  const gates = normalizeGateDraft(opts.gates);
+  const autonomy = normalizePolicy(opts.autonomy, "branch-approve", ["propose", "branch-approve", "merge-main", "full"]);
+  const deployPolicy = normalizePolicy(opts.deployPolicy, "none", ["none", "manual-web", "store-pipeline", "script", "ci-cd"]);
+  const reasoning = normalizePolicy(opts.reasoning, "medium", ["low", "medium", "high"]);
   return {
     slug,
     name,
     repo,
     stage: "partial-build",
-    loop: isGit ? "running" : "paused",
-    autonomy: "branch-approve",
+    loop: startPaused || !isGit ? "paused" : "running",
+    autonomy,
     maxAutonomy: "merge-main",
-    deployPolicy: "none",
+    deployPolicy,
     vcs: isGit ? "git" : "none",
     needsBootstrap: !isGit,
     stack: det.stack,
+    reasoning,
+    ...providerPatch,
     northStar: cleanString(northStar) || `Make ${name} production-ready and keep it healthy.`,
     agent: { adapter: "shell", command: `cd "{{REPO}}" && codex exec -c sandbox_workspace_write.network_access=true --sandbox workspace-write -c model_reasoning_effort={{REASONING}} - < "{{PROMPT_FILE}}"` },
     triggers: ["command", "test-fail"],
@@ -112,11 +162,18 @@ export function makeProjectConfig({ slug, name, repo, northStar }, det, isGit) {
     gates: det.test ? [det.test] : [],
     guardrails: ["Never commit secrets"],
     offLimits: [".env"],
-    standingContext: `Stack detected: ${det.stack}.${isGit ? "" : " This folder is not under git yet, so Fleet is paused until it is initialized."}`,
+    standingContext: cleanString(opts.standingContext) || `Stack detected: ${det.stack}.${isGit ? "" : " This folder is not under git yet, so FleetLoops is paused until it is initialized."}`,
     eightyTwentyLoop: "Make the single highest-value change toward production readiness; never busywork.",
     escalateWhen: ["Any deploy/publish", "Anything irreversible"],
     backlog: [],
-    exitConditions: [],
+    exitConditions: gates,
+    onboarding: {
+      createdAt: new Date().toISOString(),
+      brainApproved: false,
+      gatesApproved: gates.length > 0,
+      startPaused,
+      mode: cleanString(opts.mode) || "code",
+    },
   };
 }
 
@@ -127,7 +184,7 @@ export function addProjectToConfig(cfg, opts = {}) {
   const repo = resolve(expanded);
   if (!existsSync(repo)) return { ok: false, status: 404, error: "project folder not found" };
   if ((cfg.apps || []).some((a) => resolve(expandHome(a.repo || "")) === repo)) {
-    return { ok: false, status: 409, error: "project is already in Fleet" };
+    return { ok: false, status: 409, error: "project is already in FleetLoops" };
   }
 
   const providedSlug = cleanString(opts.slug);
@@ -139,9 +196,85 @@ export function addProjectToConfig(cfg, opts = {}) {
   const name = cleanString(opts.name) || basename(repo) || slug;
   const det = detectStack(repo);
   const git = isGitRepo(repo);
-  const app = makeProjectConfig({ slug, name, repo, northStar: opts.northStar }, det, git);
+  let app;
+  try {
+    app = makeProjectConfig({ slug, name, repo, northStar: opts.northStar }, det, git, opts);
+  } catch (e) {
+    return { ok: false, status: 400, error: String(e && e.message || e) };
+  }
 
   cfg.apps.push(app);
   if (git) scaffoldRepoEnv(repo, det);
   return { ok: true, status: 200, app, det, isGit: git, repo };
+}
+
+function writeIfMissing(file, body) {
+  if (!existsSync(file)) writeFileSync(file, body);
+}
+
+function uniquePath(baseDir, slug) {
+  let out = join(baseDir, slug);
+  if (!existsSync(out)) return out;
+  let n = 2;
+  while (existsSync(`${out}-${n}`)) n++;
+  return `${out}-${n}`;
+}
+
+function copySourceDocs(files, destDir) {
+  const copied = [];
+  if (!Array.isArray(files) || !files.length) return copied;
+  mkdirSync(destDir, { recursive: true });
+  for (const raw of files.slice(0, 20)) {
+    const src = resolve(expandHome(cleanString(raw.path || raw)));
+    if (!existsSync(src)) continue;
+    const target = join(destDir, basename(src));
+    try { copyFileSync(src, target); copied.push(target); } catch {}
+  }
+  return copied;
+}
+
+export function createScratchProject(cfg, opts = {}) {
+  if (!cfg || !Array.isArray(cfg.apps)) return { ok: false, status: 500, error: "config has no apps array" };
+  const name = cleanString(opts.name) || "New FleetLoops App";
+  const brief = cleanString(opts.brief);
+  if (brief.length < 20) return { ok: false, status: 400, error: "brief must describe what to build" };
+  const workspace = resolve(expandHome(cleanString(opts.workspace || opts.parent || join(homedir(), "FleetLoops Projects"))));
+  mkdirSync(workspace, { recursive: true });
+  const baseSlug = slugify(cleanString(opts.slug) || name);
+  const slug = uniqueSlug(cfg, baseSlug);
+  const repo = uniquePath(workspace, slug);
+  mkdirSync(repo, { recursive: true });
+  mkdirSync(join(repo, ".fleet"), { recursive: true });
+
+  writeIfMissing(join(repo, "PROJECT_BRIEF.md"), `# ${name}\n\n${brief}\n`);
+  writeIfMissing(join(repo, "README.md"), `# ${name}\n\nThis project was created from a FleetLoops scratch brief. The first loop should turn the brief into a production app plan before implementing user-facing code.\n`);
+  writeIfMissing(join(repo, ".fleet", "brain.md"), `# Scratch Project Brain Draft\n\n## Product\n${brief}\n\n## Current State\nNo production code has been generated yet. FleetLoops should first preserve this brief, identify the target stack, and propose implementation gates.\n`);
+  writeIfMissing(join(repo, ".fleet", "CERTIFICATIONS.md"), `# Human-only certifications for this app\n\n- [ ] Production billing/payment behavior verified\n- [ ] Publisher identity/store submission verified\n- [ ] Production secrets configured outside this repo\n`);
+  const copiedDocs = copySourceDocs(opts.files || opts.documents || [], join(repo, ".fleet", "source-docs"));
+
+  if (spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo }).status === 0) {
+    spawnSync("git", ["config", "user.email", "fleetloops@local"], { cwd: repo });
+    spawnSync("git", ["config", "user.name", "FleetLoops"], { cwd: repo });
+    spawnSync("git", ["add", "-A"], { cwd: repo });
+    spawnSync("git", ["commit", "-qm", "Initial FleetLoops scratch brief"], { cwd: repo });
+  }
+
+  const gates = normalizeGateDraft(opts.gates).length ? opts.gates : [
+    { id: "gate-1", say: "Project brief is preserved and reflected in the implementation plan", check: "human", effort: "S", source: "onboarding" },
+    { id: "gate-2", say: "A runnable app scaffold exists with documented setup and test commands", check: "agent", effort: "M", source: "onboarding" },
+    { id: "gate-3", say: "Core user workflow works end to end with real local state", check: "agent", effort: "L", source: "onboarding" },
+  ];
+  const result = addProjectToConfig(cfg, {
+    ...opts,
+    repo,
+    slug,
+    name,
+    northStar: brief,
+    gates,
+    mode: "scratch",
+    startPaused: opts.startPaused !== false,
+    standingContext: `Scratch project created from owner brief. Source documents copied: ${copiedDocs.length}.`,
+  });
+  if (!result.ok) return result;
+  return { ...result, repo, copiedDocs };
 }

@@ -3,7 +3,7 @@ import Foundation
 // EngineProcess — supervises the bundled Node engine (bridge-server.mjs --watch).
 //
 // Responsibilities:
-//   1. Seed the engine to ~/.fleet/app/<version> on first launch / version change.
+//   1. Seed the engine to ~/.fleetloops/app/<version> on first launch / version change.
 //   2. Spawn `node bridge-server.mjs --watch` with the right env (state dir, config, PATH, the
 //      stranger-safe FLEET_REQUIRE_SETUP_CONSENT flag, and any API keys pulled from the Keychain).
 //   3. Restart it with exponential backoff if it ever exits (the engine should always be up).
@@ -32,7 +32,7 @@ final class EngineProcess {
             try launch(engineDir: engineDir)
             waitForBridge()
         } catch {
-            NSLog("Fleet: engine start failed: \(error)")
+            NSLog("FleetLoops: engine start failed: \(error)")
             scheduleRestart()
         }
     }
@@ -59,10 +59,10 @@ final class EngineProcess {
     private func seedEngine() throws -> URL {
         guard let bundled = Paths.bundledEngine else {
             if let dev = Paths.devEngineRoot {
-                NSLog("Fleet: using checkout engine at \(dev.path)")
+                NSLog("FleetLoops: using checkout engine at \(dev.path)")
                 return dev
             }
-            throw NSError(domain: "Fleet", code: 1, userInfo: [NSLocalizedDescriptionKey: "bundled engine not found in app"])
+            throw NSError(domain: "FleetLoops", code: 1, userInfo: [NSLocalizedDescriptionKey: "bundled engine not found in app"])
         }
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
         let dest = Paths.seedRoot.appendingPathComponent(version, isDirectory: true)
@@ -104,7 +104,7 @@ final class EngineProcess {
 
         p.terminationHandler = { [weak self] _ in
             guard let self = self, !self.intentionalStop else { return }
-            NSLog("Fleet: engine exited — scheduling restart")
+            NSLog("FleetLoops: engine exited — scheduling restart")
             self.scheduleRestart()
         }
 
@@ -120,6 +120,7 @@ final class EngineProcess {
         var env = ProcessInfo.processInfo.environment
         env["FLEET_STATE_DIR"] = Paths.stateDir.path
         env["FLEET_CONFIG"] = Paths.configFile.path
+        env["FLEET_OLD_CONFIG"] = Paths.oldFleetConfigFile.path
         env["FLEET_REQUIRE_SETUP_CONSENT"] = "1"  // productized default: setup.sh needs user approval
 
         // launchd/login gives a minimal PATH; restore the dirs where node/codex/claude/git live.

@@ -30,7 +30,17 @@ import { getProvider } from "./providers/registry.mjs";
 import { setApiKey, deleteApiKey } from "./secrets.mjs";
 import { costSummary } from "./cost.mjs";
 import { applyAppConfigPatch, applyFleetConfigPatch, publicAppConfig, publicFleetConfig, isWithinQuietHours } from "./config-api.mjs";
-import { addProjectToConfig } from "./project-onboard.mjs";
+import { addProjectToConfig, createScratchProject } from "./project-onboard.mjs";
+import { handleCliProviderAction } from "./provider-cli.mjs";
+import {
+  applyOnboardingAction,
+  approveOnboardingBrain,
+  attachDocumentsToApp,
+  launchOnboardingApp,
+  publicOnboarding,
+  saveOnboardingGates,
+  writeProposedBrain,
+} from "./onboarding.mjs";
 
 // An app is condition-driven if it DECLARES exitConditions (even an empty list — the planner
 // seeds those on the first live pass) or already has conditions in its state.
@@ -102,6 +112,7 @@ function logKind(line) {
 // (loop status, task statuses, the run log as activity, escalations) from real state.
 function buildState() {
   const cfg = loadConfig();
+  const onboarding = publicOnboarding(cfg);
   const apps = cfg.apps.map((a) => {
     let s;
     try { s = loadState(a, cfg.fleet); } catch { s = { slug: a.slug, loop: "blocked", backlog: [], escalations: [], log: ["state unreadable"] }; }
@@ -110,6 +121,7 @@ function buildState() {
     return {
       id: a.slug, name: a.name, purpose: a.purpose || a.northStar || "", stack: a.stack || "",
       stage: a.stage, repo: a.repo, loop: s.loop, autonomy: a.autonomy, deployPolicy: a.deployPolicy,
+      onboarding: a.onboarding || null,
       reasoning: a.reasoning || "medium", model: a.model || "", adapter: a.agent?.adapter || "manual",
       config: publicAppConfig(a, cfg.fleet),
       retryCap: a.retryCap ?? cfg.fleet.defaultRetryCap, triggers: a.triggers || [], schedule: a.schedule || "—",
@@ -156,7 +168,7 @@ function buildState() {
   for (const app of apps) for (const t of app.tasks) if (t.status === "done")
     milestones.push({ appId: app.id, appName: app.name, taskId: t.id, title: t.title, plainSummary: t.plainSummary || "", userImpact: t.userImpact || "", readiness: t.category === "readiness" });
   const pause = getFleetPause(STATE_DIR);
-  return { connected: true, apps, approvals, milestones, fleet: publicFleetConfig(cfg.fleet), fleetPause: pause || null, lastPass: lastPass || null, fullPassAt, current, schedulerLive: schedulerLive, updatedAt: new Date().toISOString() };
+  return { connected: true, apps, approvals, milestones, fleet: publicFleetConfig(cfg.fleet), onboarding, fleetPause: pause || null, lastPass: lastPass || null, fullPassAt, current, schedulerLive: schedulerLive, updatedAt: new Date().toISOString() };
 }
 // heartbeat: per-APP completions (a full 9-app pass with real agent runs can legitimately take
 // an hour+, so the full-pass clock alone cries wolf). `current` = what the tick is doing RIGHT
@@ -280,6 +292,19 @@ function logErr(msg, e) {
   try { writeFileSync(join(STATE_DIR, "bridge-errors.log"), line + "\n", { flag: "a" }); } catch {}
 }
 
+function minutesOfTime(hhmm) {
+  const [h, m] = String(hhmm || "00:00").split(":").map((x) => Number(x));
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+function withinTimeWindow(start = "00:00", end = "00:00", date = new Date()) {
+  const now = date.getHours() * 60 + date.getMinutes();
+  const s = minutesOfTime(start);
+  const e = minutesOfTime(end);
+  if (s === e) return true;
+  return s < e ? now >= s && now < e : now >= s || now < e;
+}
+
 async function api(req, res, path) {
   if (req.method === "OPTIONS") return send(res, 204, "", "text/plain", req);
   if (path === "/api/state" && req.method === "GET") return send(res, 200, buildState());
@@ -290,6 +315,11 @@ async function api(req, res, path) {
 
   if (path === "/api/providers" && req.method === "GET") {
     return send(res, 200, { providers: listProviderStatus() });
+  }
+
+  if (path === "/api/onboarding" && req.method === "GET") {
+    const cfg = loadConfig();
+    return send(res, 200, { ok: true, onboarding: publicOnboarding(cfg) });
   }
 
   if (path === "/api/cost" && req.method === "GET") {
@@ -340,7 +370,82 @@ async function api(req, res, path) {
     return send(res, 200, { slug, log: text });
   }
 
+  if (path === "/api/runs" && req.method === "GET") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const slug = q.get("appId") || "";
+    const cfg = loadConfig();
+    const app = cfg.apps.find((a) => a.slug === slug);
+    if (!app) return send(res, 404, { ok: false, error: "no app" });
+    const s = loadState(app, cfg.fleet);
+    const runs = (s.backlog || [])
+      .filter((t) => ["done", "review", "blocked", "needs-human", "running"].includes(t.status) || t.branch)
+      .slice(-40)
+      .reverse()
+      .map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status === "done" ? "merged" : t.status === "review" || t.branch ? "review" : t.status === "blocked" ? "stuck" : t.status === "needs-human" ? "sent-back" : "working",
+        branch: t.branch || t.baseBranch || "",
+        duration: t.duration || "",
+        costUsd: t.costUsd || 0,
+        summary: t.plainSummary || t.lastSummary || t._lastFailure || "",
+      }));
+    return send(res, 200, { ok: true, appId: slug, runs });
+  }
+
+  if (path === "/api/run-diff" && req.method === "GET") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const slug = q.get("appId") || "";
+    const taskId = q.get("runId") || q.get("taskId") || "";
+    const cfg = loadConfig();
+    const app = cfg.apps.find((a) => a.slug === slug);
+    if (!app) return send(res, 404, { ok: false, error: "no app" });
+    const s = loadState(app, cfg.fleet);
+    const t = (s.backlog || []).find((x) => x.id === taskId) || {};
+    if (!t.branch) return send(res, 200, { ok: true, appId: slug, runId: taskId, diff: null });
+    let diff = null;
+    try { diff = branchDiff(expandHome(app.repo), t); } catch { diff = null; }
+    return send(res, 200, { ok: true, appId: slug, runId: taskId, diff });
+  }
+
+  if (path === "/api/brain-timeline" && req.method === "GET") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const slug = q.get("appId") || "";
+    const cfg = loadConfig();
+    const app = cfg.apps.find((a) => a.slug === slug);
+    if (!app) return send(res, 404, { ok: false, error: "no app" });
+    const s = loadState(app, cfg.fleet);
+    const repo = expandHome(app.repo || "");
+    const entries = [];
+    const status = (s.brain && s.brain.status) || "none";
+    if (status !== "none") entries.push({ tag: status === "approved" ? "decision" : "learning", when: (s.brain && s.brain.at) || "", text: `Project brain is ${status}.` });
+    try {
+      const learn = readFileSync(join(repo, ".fleet", "learnings.md"), "utf8").split("\n").map((l) => l.trim()).filter(Boolean).slice(-20);
+      for (const line of learn) entries.push({ tag: "learning", when: line.match(/\d{4}-\d\d-\d\d/)?.[0] || "", text: line.replace(/^-\s*/, "") });
+    } catch {}
+    for (const c of s.conditions || []) {
+      if (c.source || c.status === "met") entries.push({ tag: c.check === "human" ? "constraint" : "decision", when: c.lastChecked || "", text: `${c.status}: ${c.say}` });
+    }
+    return send(res, 200, { ok: true, appId: slug, entries: entries.slice(-50).reverse() });
+  }
+
   const body = await readBody(req);
+
+  if (path === "/api/onboarding" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const result = applyOnboardingAction(cfg, body);
+      if (!result.ok) return send(res, result.status || 400, { ok: false, error: result.error });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, result);
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/provider-cli" && req.method === "POST") {
+    const result = handleCliProviderAction(body);
+    return send(res, result.ok ? 200 : 400, result);
+  }
 
   if (path === "/api/project" && req.method === "POST") {
     try {
@@ -348,6 +453,7 @@ async function api(req, res, path) {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
       const result = addProjectToConfig(cfg, body);
       if (!result.ok) return send(res, result.status, { ok: false, error: result.error });
+      const obResult = body.onboarding ? applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: result.app.slug, mode: "code", projectDraft: { repo: result.repo, name: result.app.name, stack: result.app.stack } }) : null;
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
       return send(res, 200, {
         ok: true,
@@ -360,7 +466,88 @@ async function api(req, res, path) {
         },
         git: result.isGit,
         stack: result.det.stack,
+        onboarding: obResult?.onboarding || null,
       });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/scratch-project" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const result = createScratchProject(cfg, { ...body, onboarding: true });
+      if (!result.ok) return send(res, result.status, { ok: false, error: result.error });
+      const obResult = applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: result.app.slug, mode: "scratch", projectDraft: { repo: result.repo, name: result.app.name, brief: body.brief || "", documents: result.copiedDocs || [] } });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, {
+        ok: true,
+        app: { id: result.app.slug, name: result.app.name, repo: result.app.repo, stack: result.app.stack, loop: result.app.loop },
+        copiedDocs: result.copiedDocs || [],
+        onboarding: obResult.onboarding,
+      });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/onboarding/understand" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
+      const app = (cfg.apps || []).find((a) => a.slug === slug);
+      if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
+      const copiedDocs = attachDocumentsToApp(app, body.files || body.documents || []);
+      const result = writeProposedBrain(app, { mode: body.mode || cfg.fleet?.onboarding?.mode || app.onboarding?.mode || "code", brief: body.brief || app.northStar || "", notes: body.notes || "" });
+      applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: app.slug, mode: body.mode || app.onboarding?.mode || "code", projectDraft: { ...(cfg.fleet?.onboarding?.projectDraft || {}), copiedDocs } });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, { ...result, copiedDocs });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/onboarding/brain" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
+      const app = (cfg.apps || []).find((a) => a.slug === slug);
+      if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
+      const result = approveOnboardingBrain(app, body.editedText || body.text || "");
+      if (!result.ok) return send(res, result.status || 409, result);
+      app.onboarding = { ...(app.onboarding || {}), brainApproved: true, brainApprovedAt: new Date().toISOString() };
+      const ob = applyOnboardingAction(cfg, { action: "approve-brain", step: 3, appId: app.slug });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, { ok: true, onboarding: ob.onboarding });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/onboarding/gates" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
+      const app = (cfg.apps || []).find((a) => a.slug === slug);
+      if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
+      if (body.mergePolicy) app.autonomy = body.mergePolicy === "auto" ? "merge-main" : "branch-approve";
+      if (body.shipPolicy) app.deployPolicy = body.shipPolicy === "store" ? "store-pipeline" : body.shipPolicy === "ci" ? "ci-cd" : "none";
+      const result = saveOnboardingGates(app, cfg.fleet || {}, body.gates || []);
+      if (!result.ok) return send(res, result.status || 400, result);
+      const ob = applyOnboardingAction(cfg, { action: "save-gates", step: 4, appId: app.slug, gatesApproved: true, mergePolicy: body.mergePolicy || "approve", shipPolicy: body.shipPolicy || "manual" });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, { ok: true, gates: result.gates, onboarding: ob.onboarding });
+    } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
+  }
+
+  if (path === "/api/onboarding/launch" && req.method === "POST") {
+    try {
+      const cfgPath = CONFIG_FILE;
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
+      const app = (cfg.apps || []).find((a) => a.slug === slug);
+      if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
+      const result = launchOnboardingApp(app, cfg.fleet || {});
+      if (!result.ok) return send(res, result.status || 409, result);
+      const ob = applyOnboardingAction(cfg, { action: "complete", appId: app.slug });
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      return send(res, 200, { ok: true, onboarding: ob.onboarding, app: { id: app.slug, loop: app.loop } });
     } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
   }
 
@@ -696,6 +883,11 @@ function startScheduler() {
       return;
     }
     const cfg = loadConfig();
+    const drain = cfg.fleet?.schedule?.overnightDrain;
+    if (live && drain?.enabled && !withinTimeWindow(drain.start || "22:30", drain.end || "06:30")) {
+      console.log(`[${new Date().toLocaleTimeString()}] sweep skipped (outside overnight drain window)`);
+      return;
+    }
     if (isWithinQuietHours(cfg.fleet)) {
       console.log(`[${new Date().toLocaleTimeString()}] sweep skipped (quiet hours)`);
       return;

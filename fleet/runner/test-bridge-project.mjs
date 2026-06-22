@@ -43,13 +43,14 @@ child.stderr.on("data", (c) => { stderr += c.toString(); });
 try {
   const port = await waitForFile(join(state, "bridge.port"));
   const token = await waitForFile(join(state, "bridge.token"));
-  const post = (body) => fetch(`http://127.0.0.1:${port}/api/project`, {
+  const postPath = (path, body) => fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
+  const post = (body) => postPath("/api/project", body);
 
-  const r = await post({ repo });
+  const r = await post({ repo, onboarding: true, startPaused: true, providerId: "ollama" });
   const data = await r.json();
   const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
   ok(r.status === 200 && data.ok && data.app.id === "bridge-project", "bridge POST /api/project returns the added app");
@@ -58,6 +59,23 @@ try {
   const stateResponse = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { authorization: `Bearer ${token}` } });
   const liveState = await stateResponse.json();
   ok(liveState.apps.some((a) => a.id === "bridge-project"), "bridge state reflects the newly added project");
+  ok(liveState.onboarding && liveState.onboarding.completed === false && liveState.onboarding.appId === "bridge-project", "bridge state exposes incomplete onboarding draft");
+
+  const understand = await postPath("/api/onboarding/understand", { appId: "bridge-project", mode: "code" });
+  const understood = await understand.json();
+  ok(understand.status === 200 && understood.ok && understood.proposed.includes("Project Brain") && understood.gates.length > 0, "bridge understand step drafts brain and gates");
+
+  const brain = await postPath("/api/onboarding/brain", { appId: "bridge-project", editedText: understood.proposed });
+  const brainBody = await brain.json();
+  ok(brain.status === 200 && brainBody.ok, "bridge brain approval persists");
+
+  const gates = await postPath("/api/onboarding/gates", { appId: "bridge-project", gates: understood.gates, mergePolicy: "approve", shipPolicy: "manual" });
+  const gatesBody = await gates.json();
+  ok(gates.status === 200 && gatesBody.ok && gatesBody.gates.length === understood.gates.length, "bridge gate setup persists");
+
+  const launch = await postPath("/api/onboarding/launch", { appId: "bridge-project" });
+  const launchBody = await launch.json();
+  ok(launch.status === 200 && launchBody.ok && launchBody.onboarding.completed === true, "bridge launch completes onboarding and starts app");
 
   const dup = await post({ repo });
   const dupBody = await dup.json();

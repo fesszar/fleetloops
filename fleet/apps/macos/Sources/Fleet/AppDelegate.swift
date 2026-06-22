@@ -31,8 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         EngineProcess.shared.start()
 
-        // First launch with no projects yet → bring the dashboard up so onboarding can begin.
-        if RepoAccess.grantedPaths.isEmpty {
+        // First launch or incomplete setup → bring the dashboard up so onboarding can begin.
+        if shouldOpenDashboardForOnboarding() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.openDashboard() }
         }
     }
@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onOpenDashboard = { [weak self] in self?.openDashboard() }
         menuBar.onAddProject = { [weak self] in self?.addProject() }
         menuBar.onOpenProviders = { [weak self] in self?.openDashboard() }
+        menuBar.onRestartOnboarding = { [weak self] in self?.restartOnboarding() }
         menuBar.onTogglePause = { [weak self] in self?.togglePause() }
         menuBar.onQuit = { NSApp.terminate(nil) }
     }
@@ -61,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.showAddProjectError("Fleet service is still starting. Try again in a moment.")
                 return
             }
-            bridge.postResult("/api/project", body: ["repo": url.path]) { [weak self] result in
+            bridge.postResult("/api/project", body: ["repo": url.path, "onboarding": true, "startPaused": true]) { [weak self] result in
                 guard let self = self else { return }
                 self.openDashboard()
                 if result.ok {
@@ -81,6 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    private func restartOnboarding() {
+        guard let bridge = bridge else { openDashboard(); return }
+        bridge.post("/api/onboarding", body: ["action": "reset"]) { [weak self] _ in
+            self?.openDashboard()
+            self?.dashboard.reload()
+        }
+    }
+
     private var isPaused = false
     private func togglePause() {
         guard let bridge = bridge else { return }
@@ -97,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Notify only on the RISING EDGE of "needs you" (don't nag every poll).
         if status.approvals > lastApprovals && status.reachable {
             let n = status.approvals
-            Notifications.shared.post(title: "Fleet", body: n == 1 ? "1 item is ready for your review." : "\(n) items are ready for your review.")
+            Notifications.shared.post(title: "FleetLoops", body: n == 1 ? "1 item is ready for your review." : "\(n) items are ready for your review.")
         }
         lastApprovals = status.approvals
     }
@@ -113,9 +122,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? data.write(to: Paths.configFile)
         } else {
             let minimal = """
-            { "fleet": { "intervalMinutes": 5, "maxConcurrentLoops": 3, "defaultAutonomy": "merge-main" }, "apps": [] }
+            { "fleet": { "intervalMinutes": 5, "maxConcurrentLoops": 3, "defaultAutonomy": "merge-main", "onboarding": { "version": "night-deck-1", "completed": false, "step": 0 } }, "apps": [] }
             """
             try? minimal.data(using: .utf8)?.write(to: Paths.configFile)
         }
+    }
+
+    private func shouldOpenDashboardForOnboarding() -> Bool {
+        guard let data = try? Data(contentsOf: Paths.configFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let fleet = obj["fleet"] as? [String: Any] else { return true }
+        if let onboarding = fleet["onboarding"] as? [String: Any],
+           let completed = onboarding["completed"] as? Bool {
+            return !completed
+        }
+        return true
     }
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# build-app.sh — assemble, sign, notarize and package Fleet.app.
+# build-app.sh — assemble, sign, notarize and package FleetLoops.app.
 #
-# Run on a Mac with Xcode command-line tools. Produces build/Fleet.app and build/Fleet.dmg.
+# Run on a Mac with Xcode command-line tools. Produces build/FleetLoops.app and build/FleetLoops.dmg.
 # The engine is zero-dependency (no node_modules to sign), so the bundle is just:
-#   Fleet.app/Contents/MacOS/Fleet        ← the Swift menu-bar shell (universal2)
-#   Fleet.app/Contents/Resources/app/     ← the engine (runner/, prompts/, web/, config/, skills/)
-#   Fleet.app/Contents/Resources/app/node ← bundled universal2 Node
+#   FleetLoops.app/Contents/MacOS/Fleet        ← the Swift menu-bar shell (universal2)
+#   FleetLoops.app/Contents/Resources/app/     ← the engine (runner/, prompts/, web/, config/, skills/)
+#   FleetLoops.app/Contents/Resources/app/node ← bundled universal2 Node
 #
 # Signing is INSIDE-OUT: nested binaries first (node), then the main executable, then the app.
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FLEET_ROOT="$(cd "$HERE/../.." && pwd)"          # the fleet/ directory (holds runner/, prompts/, web/)
 BUILD="$HERE/build"
-APP="$BUILD/Fleet.app"
+APP="$BUILD/FleetLoops.app"
 NODE_VERSION="${NODE_VERSION:-20.18.1}"          # pin the bundled runtime
 DEVELOPER_ID="${DEVELOPER_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
@@ -77,7 +77,7 @@ fi
 # ---- notarize ------------------------------------------------------------------
 if [ -n "$DEVELOPER_ID" ] && [ -n "$NOTARY_PROFILE" ]; then
   echo "▸ Notarize the app"
-  ZIP="$BUILD/Fleet.zip"
+  ZIP="$BUILD/FleetLoops.zip"
   ditto -c -k --keepParent "$APP" "$ZIP"
   xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$APP"
@@ -85,8 +85,8 @@ fi
 
 # ---- dmg -----------------------------------------------------------------------
 echo "▸ Build dmg"
-DMG="$BUILD/Fleet.dmg"
-hdiutil create -volname "Fleet" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
+DMG="$BUILD/FleetLoops.dmg"
+hdiutil create -volname "FleetLoops" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
 if [ -n "$DEVELOPER_ID" ]; then
   codesign --force --sign "$DEVELOPER_ID" "$DMG"
   if [ -n "$NOTARY_PROFILE" ]; then

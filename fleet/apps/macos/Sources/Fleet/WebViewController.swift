@@ -18,15 +18,17 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
-        window.title = "Fleet"
+        window.title = "FleetLoops"
         window.center()
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("FleetDashboard")
+        window.setFrameAutosaveName("FleetLoopsDashboard")
         self.init(window: window)
 
         let config = WKWebViewConfiguration()
         let userContent = WKUserContentController()
         userContent.add(self, name: "fleetAddProject")
+        userContent.add(self, name: "fleetPickProject")
+        userContent.add(self, name: "fleetPickDocuments")
         config.userContentController = userContent
         let wv = WKWebView(frame: window.contentView!.bounds, configuration: config)
         wv.autoresizingMask = [.width, .height]
@@ -37,6 +39,8 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
 
     deinit {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetAddProject")
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetPickProject")
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetPickDocuments")
     }
 
     /// Load (or reload) the dashboard for the currently bound bridge.
@@ -61,7 +65,43 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "fleetAddProject" {
             onAddProject?()
+        } else if message.name == "fleetPickProject" {
+            pickProjectFolder()
+        } else if message.name == "fleetPickDocuments" {
+            pickSourceDocuments()
         }
+    }
+
+    private func pickProjectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Project"
+        panel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK, let path = panel.url?.path else { return }
+            self?.callJS("window.fleetNativeProjectPicked", argument: path)
+        }
+    }
+
+    private func pickSourceDocuments() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Attach"
+        panel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK else { return }
+            self?.callJS("window.fleetNativeDocumentsPicked", argument: panel.urls.map { $0.path })
+        }
+    }
+
+    private func callJS(_ functionName: String, argument: Any) {
+        guard JSONSerialization.isValidJSONObject([argument]),
+              let data = try? JSONSerialization.data(withJSONObject: [argument]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let arg = String(json.dropFirst().dropLast())
+        webView.evaluateJavaScript("if (\(functionName)) { \(functionName)(\(arg)); }", completionHandler: nil)
     }
 
     // MARK: WKNavigationDelegate — confine navigation to our loopback origin.

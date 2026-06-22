@@ -31,7 +31,16 @@ export function publicFleetConfig(fleet = {}) {
     defaultRetryCap: numberOr(fleet.defaultRetryCap, 2, { min: 1, max: 10, integer: true }),
     notifications: {
       desktop: fleet.notifications?.desktop !== false,
+      email: !!fleet.notifications?.email,
+      mobile: !!fleet.notifications?.mobile,
       webhook: cleanString(fleet.notifications?.webhook),
+      categories: {
+        needs: fleet.notifications?.categories?.needs !== false,
+        review: fleet.notifications?.categories?.review !== false,
+        stuck: fleet.notifications?.categories?.stuck !== false,
+        cap: fleet.notifications?.categories?.cap !== false,
+        win: fleet.notifications?.categories?.win !== false,
+      },
     },
     budget: {
       dailyUsd: numberOr(fleet.budget?.dailyUsd, 0, { min: 0, max: 100000 }),
@@ -42,6 +51,19 @@ export function publicFleetConfig(fleet = {}) {
       enabled: !!fleet.quietHours?.enabled,
       start: /^([01]\d|2[0-3]):[0-5]\d$/.test(fleet.quietHours?.start || "") ? fleet.quietHours.start : "22:00",
       end: /^([01]\d|2[0-3]):[0-5]\d$/.test(fleet.quietHours?.end || "") ? fleet.quietHours.end : "07:00",
+    },
+    schedule: {
+      overnightDrain: {
+        enabled: !!fleet.schedule?.overnightDrain?.enabled,
+        start: /^([01]\d|2[0-3]):[0-5]\d$/.test(fleet.schedule?.overnightDrain?.start || "") ? fleet.schedule.overnightDrain.start : "22:30",
+        end: /^([01]\d|2[0-3]):[0-5]\d$/.test(fleet.schedule?.overnightDrain?.end || "") ? fleet.schedule.overnightDrain.end : "06:30",
+      },
+    },
+    routing: {
+      routine: cleanString(fleet.routing?.routine) || "ollama",
+      standard: cleanString(fleet.routing?.standard) || "codex",
+      risky: cleanString(fleet.routing?.risky) || "openai",
+      fallback: Array.isArray(fleet.routing?.fallback) ? fleet.routing.fallback.map(cleanString).filter(Boolean).slice(0, 8) : ["codex", "openai", "anthropic"],
     },
   };
 }
@@ -127,10 +149,18 @@ export function applyFleetConfigPatch(cfg, body = {}) {
   if (patch.notifications !== undefined) {
     fleet.notifications = { ...(fleet.notifications || {}) };
     if (patch.notifications.desktop !== undefined) fleet.notifications.desktop = !!patch.notifications.desktop;
+    if (patch.notifications.email !== undefined) fleet.notifications.email = !!patch.notifications.email;
+    if (patch.notifications.mobile !== undefined) fleet.notifications.mobile = !!patch.notifications.mobile;
     if (patch.notifications.webhook !== undefined) {
       const webhook = cleanString(patch.notifications.webhook);
       if (webhook) fleet.notifications.webhook = webhook;
       else delete fleet.notifications.webhook;
+    }
+    if (patch.notifications.categories !== undefined) {
+      fleet.notifications.categories = { ...(fleet.notifications.categories || {}) };
+      for (const key of ["needs", "review", "stuck", "cap", "win"]) {
+        if (patch.notifications.categories[key] !== undefined) fleet.notifications.categories[key] = !!patch.notifications.categories[key];
+      }
     }
   }
 
@@ -155,6 +185,35 @@ export function applyFleetConfigPatch(cfg, body = {}) {
     if (q.enabled !== undefined) fleet.quietHours.enabled = !!q.enabled;
     if (/^([01]\d|2[0-3]):[0-5]\d$/.test(q.start || "")) fleet.quietHours.start = q.start;
     if (/^([01]\d|2[0-3]):[0-5]\d$/.test(q.end || "")) fleet.quietHours.end = q.end;
+  }
+
+  if (patch.schedule !== undefined) {
+    const s = patch.schedule || {};
+    fleet.schedule = { ...(fleet.schedule || {}) };
+    if (s.overnightDrain !== undefined) {
+      const o = s.overnightDrain || {};
+      fleet.schedule.overnightDrain = { ...(fleet.schedule.overnightDrain || {}) };
+      if (o.enabled !== undefined) fleet.schedule.overnightDrain.enabled = !!o.enabled;
+      if (/^([01]\d|2[0-3]):[0-5]\d$/.test(o.start || "")) fleet.schedule.overnightDrain.start = o.start;
+      if (/^([01]\d|2[0-3]):[0-5]\d$/.test(o.end || "")) fleet.schedule.overnightDrain.end = o.end;
+    }
+  }
+
+  if (patch.routing !== undefined) {
+    const r = patch.routing || {};
+    fleet.routing = { ...(fleet.routing || {}) };
+    for (const key of ["routine", "standard", "risky"]) {
+      if (r[key] !== undefined) {
+        const v = cleanString(r[key]);
+        if (v) fleet.routing[key] = v;
+        else delete fleet.routing[key];
+      }
+    }
+    if (r.fallback !== undefined) {
+      const fallback = Array.isArray(r.fallback) ? r.fallback.map(cleanString).filter(Boolean).slice(0, 8) : [];
+      if (fallback.length) fleet.routing.fallback = fallback;
+      else delete fleet.routing.fallback;
+    }
   }
 
   return { ok: true, status: 200, fleet: publicFleetConfig(fleet) };

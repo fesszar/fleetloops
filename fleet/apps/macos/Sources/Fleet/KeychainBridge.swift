@@ -11,7 +11,7 @@ enum KeychainBridge {
     /// Providers that authenticate with an API key (must match providers/registry.mjs).
     static let apiKeyProviders = ["openai", "anthropic", "deepseek", "gemini", "openrouter"]
 
-    private static let service = "com.fleet.app.providerkey"
+    private static let service = "com.fleetloops.app.providerkey"
 
     static func setKey(_ key: String, for providerId: String) {
         let account = providerId.lowercased()

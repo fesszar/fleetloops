@@ -70,6 +70,15 @@ function mergeProviderStatus(providers, status) {
   });
 }
 
+function deepCheckConnectedCliProviders(providers, setProviders) {
+  const targets = (providers || []).filter((p) => p.kind === "agentic-cli" && p.connected);
+  for (const p of targets) {
+    checkCliProviderStatus(p.id, { deep: true })
+      .then((checked) => setProviders((prev) => mergeProviderStatus(prev, checked)))
+      .catch(() => {});
+  }
+}
+
 async function pollProviderReady(providerId, onProviders, { attempts = 8, delayMs = 3000 } = {}) {
   let latest = null;
   for (let i = 0; i < attempts; i += 1) {
@@ -1048,7 +1057,10 @@ function ProvidersPanel({ flash, embedded = false }) {
   const [data, setData] = useState(null);
   const [pending, setPending] = useState([]);
   const load = useCallback(() => {
-    fetchProviders().then(setData).catch(() => setData([]));
+    fetchProviders().then((providers) => {
+      setData(providers);
+      deepCheckConnectedCliProviders(providers, setData);
+    }).catch(() => setData([]));
     fetch(`${API}/api/setup-consent`, { cache: "no-store" }).then((r) => r.json()).then((d) => setPending(d.pending || [])).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -1252,7 +1264,10 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   const [shipPolicy, setShipPolicy] = useState(onboarding.shipPolicy || "manual");
   const activeApp = apps.find((a) => a.id === appId) || null;
 
-  const loadProviders = useCallback(() => fetchProviders().then(setProviders).catch(() => setProviders([])), []);
+  const loadProviders = useCallback(() => fetchProviders().then((rows) => {
+    setProviders(rows);
+    deepCheckConnectedCliProviders(rows, setProviders);
+  }).catch(() => setProviders([])), []);
   useEffect(() => { loadProviders(); }, [loadProviders]);
   useRefreshOnFocus(loadProviders);
   useEffect(() => { setStep(Math.max(0, Math.min(4, onboarding.step || 0))); }, [onboarding.step]);

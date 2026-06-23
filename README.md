@@ -4,7 +4,7 @@ Fleet points a coding agent at your projects and drives each one toward "done" o
 
 Built by **Gideon Awolesi**. MIT-licensed.
 
-> Status: production-ready direct DMG. The redesigned dashboard, local bridge, project onboarding flow, runner, and macOS shell are covered by 224 passing runner checks plus web, Swift release, bridge-flow, signing, notarization, stapling, Gatekeeper, and DMG verification.
+> Status: production-ready direct DMG. The redesigned dashboard, local bridge, project onboarding flow, runner, and macOS shell are covered by 252 passing runner checks plus web, Swift release, bridge-flow, signing, notarization, stapling, Gatekeeper, and DMG verification.
 
 ## What it does
 
@@ -41,9 +41,8 @@ npm run serve:watch        # starts the local bridge + scheduler at http://127.0
 Run the test suite (no network, no dependencies):
 
 ```bash
-cd fleet/runner
-for t in test-bridge-project test-bridge-run test-conditions test-harness test-security test-loop test-integration test-providers test-config; do
-  FLEET_STATE_DIR=$(mktemp -d) node $t.mjs
+for t in fleet/runner/test-*.mjs; do
+  FLEET_STATE_DIR=$(mktemp -d) node "$t"
 done
 ```
 
@@ -74,8 +73,8 @@ The current direct DMG build has been verified with:
 ```bash
 bash fleet/web/build.sh
 cd fleet/runner
-for t in test-bridge-project test-bridge-run test-conditions test-harness test-security test-loop test-integration test-providers test-config; do
-  FLEET_STATE_DIR=$(mktemp -d) node $t.mjs
+for t in test-*.mjs; do
+  FLEET_STATE_DIR=$(mktemp -d) node "$t"
 done
 cd ../apps/macos
 swift build -c release

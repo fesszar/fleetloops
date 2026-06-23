@@ -32,6 +32,77 @@ function notify(n) { try { if ("Notification" in window && Notification.permissi
 */
 
 const API = (typeof location !== "undefined" && location.protocol === "file:") ? "http://localhost:7777" : "";
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchProviders() {
+  const r = await fetch(`${API}/api/providers`, { cache: "no-store" });
+  const d = await r.json();
+  return d.providers || [];
+}
+
+async function checkCliProviderStatus(providerId, { deep = false } = {}) {
+  const r = await fetch(`${API}/api/provider-cli`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider: providerId, action: "check", deep }),
+  });
+  const d = await r.json();
+  if (!r.ok || d.ok === false) throw new Error(d.error || `Provider check failed (${r.status})`);
+  return d;
+}
+
+function mergeProviderStatus(providers, status) {
+  if (!status || !status.provider) return providers || [];
+  return (providers || []).map((p) => {
+    if (p.id !== status.provider) return p;
+    return {
+      ...p,
+      installed: !!status.installed,
+      authenticated: !!status.authenticated,
+      usable: !!status.usable,
+      connected: !!status.connected,
+      command: status.command || p.command,
+      path: status.path || p.path,
+      version: status.version || p.version,
+      cli: status.cli || p.cli,
+      detail: status.detail || p.detail,
+    };
+  });
+}
+
+async function pollProviderReady(providerId, onProviders, { attempts = 8, delayMs = 3000 } = {}) {
+  let latest = null;
+  for (let i = 0; i < attempts; i += 1) {
+    const providers = await fetchProviders();
+    onProviders?.(providers);
+    latest = providers.find((p) => p.id === providerId) || null;
+    if (latest && latest.auth === "none-local") return latest;
+    if (latest?.connected && latest.kind === "agentic-cli") {
+      const checked = await checkCliProviderStatus(providerId, { deep: true });
+      const merged = mergeProviderStatus(providers, checked);
+      onProviders?.(merged);
+      latest = merged.find((p) => p.id === providerId) || latest;
+      if (latest.connected) return latest;
+    } else if (latest?.connected) {
+      return latest;
+    }
+    await delay(delayMs);
+  }
+  return latest;
+}
+
+function useRefreshOnFocus(refresh) {
+  useEffect(() => {
+    const run = () => refresh?.();
+    const onVisibility = () => { if (!document.hidden) run(); };
+    window.addEventListener("focus", run);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", run);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refresh]);
+}
 
 const c = {
   bg: "#0A0F1C", bgGrad: "#0C1322", panel: "#111A2C", panel2: "#0E1626", raised: "#172339",
@@ -977,10 +1048,11 @@ function ProvidersPanel({ flash, embedded = false }) {
   const [data, setData] = useState(null);
   const [pending, setPending] = useState([]);
   const load = useCallback(() => {
-    fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setData(d.providers || [])).catch(() => setData([]));
+    fetchProviders().then(setData).catch(() => setData([]));
     fetch(`${API}/api/setup-consent`, { cache: "no-store" }).then((r) => r.json()).then((d) => setPending(d.pending || [])).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
+  useRefreshOnFocus(load);
   if (!data) return <div className="p-10 text-slate-500">Loading providers…</div>;
   const clis = data.filter((p) => p.kind === "agentic-cli");
   const apis = data.filter((p) => p.kind === "api");
@@ -989,7 +1061,7 @@ function ProvidersPanel({ flash, embedded = false }) {
         {pending.length > 0 && <SetupConsent pending={pending} flash={flash} reload={load} />}
         <div>
           <div className="text-sm font-semibold text-slate-300 mb-2">Coding agents (sign in with the CLI)</div>
-          <div className="grid sm:grid-cols-2 gap-3">{clis.map((p) => <CliCard key={p.id} p={p} flash={flash} reload={load} />)}</div>
+          <div className="grid sm:grid-cols-2 gap-3">{clis.map((p) => <CliCard key={p.id} p={p} flash={flash} reload={load} setProviders={setData} />)}</div>
         </div>
         <div>
           <div className="text-sm font-semibold text-slate-300 mb-1">Bring your own API key</div>
@@ -1001,18 +1073,37 @@ function ProvidersPanel({ flash, embedded = false }) {
   if (embedded) return body;
   return <><Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />{body}</>;
 }
-function CliCard({ p, flash, reload }) {
+function CliCard({ p, flash, reload, setProviders }) {
   const statusText = providerStatusText(p);
   const cliName = providerCliName(p);
   const statusTone = p.connected ? "text-emerald-300" : p.installed ? "text-amber-300" : "text-slate-400";
   const dotTone = p.connected ? "bg-emerald-400" : p.installed ? "bg-amber-400" : "bg-slate-600";
+  const refresh = async () => {
+    await reload?.();
+    if (!p.installed) return;
+    try {
+      const checked = await checkCliProviderStatus(p.id, { deep: true });
+      setProviders?.((prev) => mergeProviderStatus(prev, checked));
+      flash(`${p.label}: ${checked.detail || (checked.connected ? "connected" : "not ready")}`);
+    } catch (e) {
+      flash(String(e.message || e));
+    }
+  };
   const login = () => {
     if (!p.installed) {
       flash(`${p.label} is not installed yet. Install the ${cliName} CLI, then refresh provider status.`);
       return;
     }
     fetch(`${API}/api/provider-cli`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "login" }) })
-    .then((r) => r.json()).then((d) => { if (!d.ok) throw new Error(d.error || "login failed"); flash(d.note || `Opened ${d.command}`); reload?.(); })
+    .then((r) => r.json()).then(async (d) => {
+      if (!d.ok) throw new Error(d.error || "login failed");
+      flash(d.note || `Opened ${d.command}`);
+      reload?.();
+      const ready = await pollProviderReady(p.id, setProviders || null);
+      if (ready?.connected) flash(`${p.label} connected`);
+      else if (ready?.detail) flash(`${p.label}: ${ready.detail}`);
+      reload?.();
+    })
     .catch((e) => flash(String(e.message || e)));
   };
   return (
@@ -1027,7 +1118,7 @@ function CliCard({ p, flash, reload }) {
       {p.installed && !p.connected && <div className="text-xs text-slate-400 mt-1">Finish sign-in or fix the account status, then press Refresh. FleetLoops will not treat an installed-but-unready CLI as connected.</div>}
       <div className="mt-3 flex gap-2">
         <button onClick={login} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
-        <button onClick={reload} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+        <button onClick={refresh} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
       </div>
     </div>
   );
@@ -1161,8 +1252,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   const [shipPolicy, setShipPolicy] = useState(onboarding.shipPolicy || "manual");
   const activeApp = apps.find((a) => a.id === appId) || null;
 
-  const loadProviders = useCallback(() => fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])), []);
+  const loadProviders = useCallback(() => fetchProviders().then(setProviders).catch(() => setProviders([])), []);
   useEffect(() => { loadProviders(); }, [loadProviders]);
+  useRefreshOnFocus(loadProviders);
   useEffect(() => { setStep(Math.max(0, Math.min(4, onboarding.step || 0))); }, [onboarding.step]);
   useEffect(() => {
     const oldProject = window.fleetNativeProjectPicked;
@@ -1204,6 +1296,25 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
     const d = await postJson("provider-cli", { provider: id, action: "login" });
     flash(d.note || `Opened ${d.command}`);
     await loadProviders();
+    const ready = await pollProviderReady(id, setProviders);
+    if (ready?.connected) {
+      setProviderId(id);
+      await postJson("onboarding", { action: "set-provider", providerId: id });
+      await pull();
+      flash(`${ready.label} connected`);
+    }
+    else if (ready?.detail) flash(`${ready.label || "CLI"}: ${ready.detail}`);
+  });
+  const refreshCliProvider = (id) => run(async () => {
+    await loadProviders();
+    const checked = await checkCliProviderStatus(id, { deep: true });
+    setProviders((prev) => mergeProviderStatus(prev, checked));
+    if (checked.connected) {
+      setProviderId(id);
+      await postJson("onboarding", { action: "set-provider", providerId: id });
+      await pull();
+    }
+    flash(`${checked.label || "CLI"}: ${checked.detail || (checked.connected ? "connected" : "not ready")}`);
   });
   const chooseProvider = (id) => run(async () => {
     setProviderId(id);
@@ -1289,7 +1400,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
         <div className="flex-1 overflow-y-auto p-5">
           {onboarding.oldFleet?.detected && !onboarding.migration?.choice && <MigrationPrompt onboarding={onboarding} postJson={postJson} pull={pull} flash={flash} />}
           {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 p-3 text-sm" role="alert">{error}</div>}
-          {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} loadProviders={loadProviders} flash={flash} />}
+          {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} />}
           {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
           {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} brainText={brainText} setBrainText={setBrainText} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
           {step === 3 && <StepDone gates={gates} setGates={setGates} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} />}
@@ -1329,7 +1440,7 @@ function MigrationPrompt({ onboarding, postJson, pull, flash }) {
   );
 }
 
-function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, loadProviders, flash }) {
+function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, refreshCliProvider, loadProviders, flash }) {
   const clis = providers.filter((p) => p.kind === "agentic-cli");
   const apis = providers.filter((p) => p.kind === "api");
   const chooseReadyProvider = (p) => {
@@ -1352,7 +1463,7 @@ function StepConnect({ providers, providerId, selectedProvider, chooseProvider, 
             {p.installed && !p.connected && <div className="text-xs text-amber-300/80 mt-1">Finish sign-in or fix the account issue, then refresh. This CLI is not selectable yet.</div>}
             <div className="flex gap-2 mt-3">
               <button onClick={(e) => { e.stopPropagation(); connectCli(p.id); }} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
-              <button onClick={(e) => { e.stopPropagation(); loadProviders(); flash("Provider status refreshed"); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+              <button onClick={(e) => { e.stopPropagation(); p.kind === "agentic-cli" ? refreshCliProvider(p.id) : (loadProviders(), flash("Provider status refreshed")); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
             </div>
           </PathCard>)}
         </div>

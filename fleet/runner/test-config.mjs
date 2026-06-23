@@ -57,10 +57,22 @@ exit 1
   writeExecutable(join(fakeBin, "codex"), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
+if [ "$1" = "exec" ]; then echo "READY"; exit 0; fi
 exit 1
 `);
   const ready = withPath(fakePath, () => checkCliProvider("codex"));
   ok(ready.installed === true && ready.authenticated === true && ready.usable === true && ready.connected === true, "authenticated Codex CLI is connected");
+  const verifiedReady = withPath(fakePath, () => checkCliProvider("codex", { deep: true }));
+  ok(verifiedReady.connected === true && /verified/i.test(verifiedReady.detail), "deep Codex probe verifies the executable token path");
+
+  writeExecutable(join(fakeBin, "codex"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
+if [ "$1" = "exec" ]; then echo "Your authentication token has been invalidated. Please try signing in again."; exit 1; fi
+exit 1
+`);
+  const staleToken = withPath(fakePath, () => checkCliProvider("codex", { deep: true }));
+  ok(staleToken.authenticated === false && staleToken.connected === false, "deep Codex probe rejects invalidated browser tokens");
 
   writeExecutable(join(fakeBin, "claude"), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "claude test"; exit 0; fi

@@ -30,10 +30,42 @@ function versionOf(bin) {
   }
 }
 
-function authProbe(bin) {
+const unauthRe = /not\s+(logged|signed)|unauth|login required|no account|not authenticated|no active account/i;
+const unusableRe = /credit balance is too low|quota|out of credits|usage limit|billing/i;
+const invalidTokenRe = /401 unauthorized|token[_ ]invalidated|refresh[_ ]token[_ ]invalidated|session has ended|invalid[_ ]token|please (try )?signing? in again|please run.{0,30}login/i;
+
+function codexDeepProbe(bin) {
+  try {
+    const r = spawnSync(bin, [
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "-c",
+      "model_reasoning_effort=low",
+      "-",
+    ], {
+      input: "Reply exactly: READY\n",
+      encoding: "utf8",
+      timeout: 20000,
+    });
+    const text = clean(`${r.stdout || ""}\n${r.stderr || ""}`);
+    if (invalidTokenRe.test(text) || unauthRe.test(text)) {
+      return { authenticated: false, usable: false, detail: "Session expired - sign in again" };
+    }
+    if (unusableRe.test(text)) {
+      return { authenticated: true, usable: false, detail: "Signed in, but account or quota is not usable" };
+    }
+    if (r.error && r.error.code === "ETIMEDOUT") return { authenticated: true, usable: false, detail: "signed in, but verification timed out" };
+    if (r.status === 0) return { authenticated: true, usable: true, detail: "Signed in and verified" };
+    return { authenticated: true, usable: false, detail: text.split("\n")[0] || "signed in, but verification failed" };
+  } catch {
+    return { authenticated: true, usable: false, detail: "signed in, but verification failed" };
+  }
+}
+
+function authProbe(bin, { deep = false } = {}) {
   if (!bin) return { authenticated: false, usable: false, detail: "not installed" };
-  const unauth = /not\s+(logged|signed)|unauth|login required|no account|not authenticated|no active account/i;
-  const unusable = /credit balance is too low|quota|out of credits|usage limit|billing/i;
   const commands = bin === "codex"
     ? [["login", "status"]]
     : [["auth", "status"], ["login", "status"]];
@@ -44,23 +76,25 @@ function authProbe(bin) {
       const text = clean(`${r.stdout || ""}\n${r.stderr || ""}`);
       if (!text) continue;
       sawInstalled = true;
-      if (unauth.test(text)) return { authenticated: false, usable: false, detail: text.split("\n")[0] || "sign in required" };
+      if (invalidTokenRe.test(text) || unauthRe.test(text)) return { authenticated: false, usable: false, detail: text.split("\n")[0] || "sign in required" };
       if (bin === "claude" && args.join(" ") === "auth status") {
         try {
           const json = JSON.parse(text);
           if (json.loggedIn === true) {
             const usableCheck = spawnSync(bin, ["status"], { encoding: "utf8", timeout: 8000 });
             const usableText = clean(`${usableCheck.stdout || ""}\n${usableCheck.stderr || ""}`);
-            if (unusable.test(usableText)) return { authenticated: true, usable: false, detail: usableText.split("\n")[0] || "signed in, but not usable" };
+            if (invalidTokenRe.test(usableText)) return { authenticated: false, usable: false, detail: usableText.split("\n")[0] || "sign in again" };
+            if (unusableRe.test(usableText)) return { authenticated: true, usable: false, detail: usableText.split("\n")[0] || "signed in, but not usable" };
             return { authenticated: true, usable: true, detail: json.email ? `Signed in as ${json.email}` : "Signed in" };
           }
           if (json.loggedIn === false) return { authenticated: false, usable: false, detail: "sign in required" };
         } catch {}
       }
       if (/logged in|signed in|authenticated/i.test(text) && r.status === 0) {
+        if (deep && bin === "codex") return codexDeepProbe(bin);
         return { authenticated: true, usable: true, detail: text.split("\n")[0] || "Signed in" };
       }
-      if (unusable.test(text)) return { authenticated: true, usable: false, detail: text.split("\n")[0] || "signed in, but not usable" };
+      if (unusableRe.test(text)) return { authenticated: true, usable: false, detail: text.split("\n")[0] || "signed in, but not usable" };
     } catch {}
   }
   return sawInstalled
@@ -68,13 +102,13 @@ function authProbe(bin) {
     : { authenticated: false, usable: false, detail: "sign in required" };
 }
 
-export function checkCliProvider(providerId) {
+export function checkCliProvider(providerId, { deep = false } = {}) {
   const p = getProvider(providerId);
   const bin = cliCommand(providerId);
   if (!p || !bin) return { ok: false, error: "unknown CLI provider" };
   const path = which(bin);
   const installed = !!path;
-  const probe = installed ? authProbe(bin) : { authenticated: false, usable: false, detail: `install the ${bin} CLI` };
+  const probe = installed ? authProbe(bin, { deep }) : { authenticated: false, usable: false, detail: `install the ${bin} CLI` };
   return {
     ok: true,
     provider: p.id,
@@ -120,7 +154,7 @@ export function loginCliProvider(providerId) {
 export function handleCliProviderAction(body = {}) {
   const provider = clean(body.provider || body.providerId);
   const action = clean(body.action || "check");
-  if (action === "check" || action === "refresh") return checkCliProvider(provider);
+  if (action === "check" || action === "refresh") return checkCliProvider(provider, { deep: body.deep === true });
   if (action === "login") return loginCliProvider(provider);
   return { ok: false, error: "unknown provider CLI action" };
 }

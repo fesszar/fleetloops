@@ -15,6 +15,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onAddProject: (() -> Void)?
     var onTogglePause: (() -> Void)?
     var onOpenProviders: (() -> Void)?
+    var onRestartService: (() -> Void)?
     var onRestartOnboarding: (() -> Void)?
     var onQuit: (() -> Void)?
 
@@ -69,6 +70,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         add("Add Project…", #selector(addProject), key: "n")
         add("Providers & Keys…", #selector(openProviders), key: "")
+        add("Restart Fleet Service", #selector(restartService), key: "")
         add("Restart Onboarding…", #selector(restartOnboarding), key: "")
         menu.addItem(.separator())
         add("Quit FleetLoops", #selector(quit), key: "q")
@@ -84,6 +86,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func addProject() { onAddProject?() }
     @objc private func togglePause() { onTogglePause?() }
     @objc private func openProviders() { onOpenProviders?() }
+    @objc private func restartService() { onRestartService?() }
     @objc private func restartOnboarding() { onRestartOnboarding?() }
     @objc private func quit() { onQuit?() }
 

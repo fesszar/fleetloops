@@ -431,6 +431,16 @@ async function api(req, res, path) {
 
   const body = await readBody(req);
 
+  if (path === "/api/system" && req.method === "POST") {
+    const action = String(body.action || "");
+    if (action === "restart-service" || action === "restart-bridge") {
+      send(res, 200, { ok: true, restarting: true, note: "Restarting FleetLoops service. The Mac app reconnects automatically." });
+      setTimeout(() => process.exit(0), 150).unref?.();
+      return;
+    }
+    return send(res, 400, { ok: false, error: "unknown system action" });
+  }
+
   if (path === "/api/onboarding" && req.method === "POST") {
     try {
       const cfgPath = CONFIG_FILE;

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { listProviderStatus, validateApiKey } from "./providers/validate.mjs";
-import { checkCliProvider } from "./provider-cli.mjs";
+import { checkCliProvider, handleCliProviderAction } from "./provider-cli.mjs";
 import { recordCost, costSummary, spendForApp, budgetExceeded, computeUsd } from "./cost.mjs";
 import { applyAppConfigPatch, applyFleetConfigPatch, isWithinQuietHours, publicFleetConfig } from "./config-api.mjs";
 import { addProjectToConfig } from "./project-onboard.mjs";
@@ -62,6 +62,8 @@ exit 1
 `);
   const ready = withPath(fakePath, () => checkCliProvider("codex"));
   ok(ready.installed === true && ready.authenticated === true && ready.usable === true && ready.connected === true, "authenticated Codex CLI is connected");
+  const shallow = withPath(fakePath, () => checkCliProvider("codex", { auth: false }));
+  ok(shallow.installed === true && shallow.connected === false && /refresh/i.test(shallow.detail), "shallow CLI status never marks a provider connected before explicit verification");
   const verifiedReady = withPath(fakePath, () => checkCliProvider("codex", { deep: true }));
   ok(verifiedReady.connected === true && /verified/i.test(verifiedReady.detail), "deep Codex probe verifies the executable token path");
 
@@ -73,6 +75,15 @@ exit 1
 `);
   const staleToken = withPath(fakePath, () => checkCliProvider("codex", { deep: true }));
   ok(staleToken.authenticated === false && staleToken.connected === false, "deep Codex probe rejects invalidated browser tokens");
+
+  writeExecutable(join(fakeBin, "codex"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Not logged in"; exit 1; fi
+if [ "$1" = "login" ] && [ "$2" = "--device-auth" ]; then printf '%s\\n' 'Open this link in your browser' 'https://auth.openai.com/codex/device' 'Enter this one-time code' 'ABCD-EFGH'; exit 0; fi
+exit 1
+`);
+  const deviceLogin = withPath(fakePath, () => handleCliProviderAction({ provider: "codex", action: "login" }));
+  ok(deviceLogin.ok && deviceLogin.method === "device-code" && deviceLogin.authUrl && deviceLogin.deviceCode === "ABCD-EFGH", "Codex login uses in-app device-code flow without Terminal");
 
   writeExecutable(join(fakeBin, "claude"), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "claude test"; exit 0; fi

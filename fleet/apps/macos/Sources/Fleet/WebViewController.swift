@@ -11,6 +11,7 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
     private var webView: WKWebView!
     private var origin: String = ""
     var onAddProject: (() -> Void)?
+    var onRestartService: (() -> Void)?
 
     convenience init() {
         let window = NSWindow(
@@ -27,6 +28,7 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
         let config = WKWebViewConfiguration()
         let userContent = WKUserContentController()
         userContent.add(self, name: "fleetAddProject")
+        userContent.add(self, name: "fleetRestartService")
         userContent.add(self, name: "fleetPickProject")
         userContent.add(self, name: "fleetPickDocuments")
         config.userContentController = userContent
@@ -39,6 +41,7 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
 
     deinit {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetAddProject")
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetRestartService")
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetPickProject")
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "fleetPickDocuments")
     }
@@ -65,6 +68,8 @@ final class WebViewController: NSWindowController, WKNavigationDelegate, WKScrip
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "fleetAddProject" {
             onAddProject?()
+        } else if message.name == "fleetRestartService" {
+            onRestartService?()
         } else if message.name == "fleetPickProject" {
             pickProjectFolder()
         } else if message.name == "fleetPickDocuments" {

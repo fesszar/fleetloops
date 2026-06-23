@@ -577,8 +577,8 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
     if (failure === "auth") {
       task.status = "queued";
       pushLog(state, `AUTH-PAUSE ${task.id}: agent CLI not authenticated / out of quota`);
-      setFleetPause(STATE_DIR, "Agent CLI authentication/quota problem — run `codex login` (or wait for quota reset). The fleet auto-retries in a few hours.");
-      notify(STATE_DIR, "Fleet paused", "The coding agent isn't authenticated (or hit its usage limit). Run `codex login`, then the fleet resumes by itself.", { fleet });
+      setFleetPause(STATE_DIR, "Agent CLI authentication/quota problem — open FleetLoops Settings → Agents & keys to reconnect, or wait for quota reset. The fleet auto-retries in a few hours.");
+      notify(STATE_DIR, "Fleet paused", "The coding agent isn't authenticated or hit a usage limit. Open FleetLoops Settings → Agents & keys to reconnect.", { fleet });
       saveState(state);
       return { slug: app.slug, action: "fleet-paused", task: task.id, reason: "agent auth/quota" };
     }

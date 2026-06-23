@@ -16,12 +16,12 @@ export function listProviderStatus() {
   return Object.values(PROVIDERS).map((p) => {
     let connected = false, detail = "", installed = false, authenticated = false, usable = false, command = "", path = "", version = "", cli = p.cli || "";
     if (p.kind === "agentic-cli") {
-      const status = checkCliProvider(p.id);
+      const status = checkCliProvider(p.id, { auth: false });
       installed = !!status.installed;
       authenticated = !!status.authenticated;
       usable = !!status.usable;
       connected = !!status.connected;
-      detail = status.detail || (installed ? "sign in required" : `install the ${p.cli} CLI`);
+      detail = status.detail || (installed ? "Refresh to check sign-in" : `install the ${p.cli} CLI`);
       command = status.command || `${p.cli} login`;
       cli = status.cli || p.cli || "";
       path = status.path || "";

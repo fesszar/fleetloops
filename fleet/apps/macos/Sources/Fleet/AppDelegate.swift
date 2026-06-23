@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LoginItem.enableOnFirstRunIfNeeded()
 
         dashboard.onAddProject = { [weak self] in self?.addProject() }
+        dashboard.onRestartService = { [weak self] in self?.restartService() }
 
         wireMenu()
 
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onOpenDashboard = { [weak self] in self?.openDashboard() }
         menuBar.onAddProject = { [weak self] in self?.addProject() }
         menuBar.onOpenProviders = { [weak self] in self?.openDashboard() }
+        menuBar.onRestartService = { [weak self] in self?.restartService() }
         menuBar.onRestartOnboarding = { [weak self] in self?.restartOnboarding() }
         menuBar.onTogglePause = { [weak self] in self?.togglePause() }
         menuBar.onQuit = { NSApp.terminate(nil) }
@@ -88,6 +90,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openDashboard()
             self?.dashboard.reload()
         }
+    }
+
+    private func restartService() {
+        bridge = nil
+        StatusPoller.shared.stop()
+        EngineProcess.shared.restart()
+        openDashboard()
     }
 
     private var isPaused = false

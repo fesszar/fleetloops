@@ -224,7 +224,7 @@ function humanizeLog(msg) {
     [/^RECONCILE: pulled (\d+) new task/, (m) => `📥 ${m[1]} new task(s) added from the plan`],
     [/^WORKTREE (\S+): (\S+).*/, (m) => `🛠 Working on ${m[1]} in a safe isolated copy`],
     [/^INFRA-RETRY (\S+) \((\d)\/3\): (.*)/, (m) => `⚠️ Environment hiccup on ${m[1]} — auto-retrying (${m[2]}/3): ${m[3]}`],
-    [/^AUTH-PAUSE.*/, () => `🔑 Agent login/quota problem — fleet paused itself (run codex login)`],
+    [/^AUTH-PAUSE.*/, () => `🔑 Agent login/quota problem — open Agents & keys to reconnect`],
     [/^RECOVERED (\S+).*/, (m) => `🩹 Recovered ${m[1]} after an interruption — requeued`],
     [/^SKIP (\S+): (.*)/, (m) => `✅ ${m[1]} was already done: ${m[2]}`],
     [/^SKIP-WITH-WORK (\S+).*/, (m) => `👀 ${m[1]}: agent says it's done but left changes — review them`],
@@ -357,6 +357,7 @@ export default function FleetView() {
   const [query, setQuery] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("fleetSound") !== "off"; } catch { return true; } });
+  const [actionBusy, setActionBusy] = useState(null);
   const prevApprovals = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
@@ -424,6 +425,36 @@ export default function FleetView() {
   const toggleLoop = (id) => { const a = apps.find((x) => x.id === id); const next = a.loop === "running" ? "pause" : "resume"; post("loop", { slug: id, action: next }); flash(`${a.name}: ${next === "pause" ? "paused" : "resumed"}`); };
   const runAll = () => { post("loop", { slug: "*", action: "resume" }); flash("All eligible loops started"); };
   const pauseAll = () => { post("loop", { slug: "*", action: "pause" }); flash("All loops paused"); };
+  const runNow = async () => {
+    if (actionBusy) return;
+    setActionBusy("run");
+    flash("Running one fleet pass now");
+    try {
+      const d = await postJson("run", { live: true });
+      const summary = (d.results || []).map((r) => `${r.slug}: ${r.action}`).join(", ");
+      flash(summary ? `Run finished: ${summary}` : "Run finished");
+      await pull();
+    } catch (e) { flash(String(e.message || e)); }
+    finally { setActionBusy(null); }
+  };
+  const restartService = async () => {
+    if (actionBusy) return;
+    setActionBusy("restart");
+    flash("Restarting FleetLoops service");
+    const nativeRestart = typeof window !== "undefined" ? window.webkit?.messageHandlers?.fleetRestartService : null;
+    if (nativeRestart) {
+      try {
+        nativeRestart.postMessage({});
+        setConnected(null);
+        setTimeout(() => { pull().finally(() => setActionBusy(null)); }, 3500);
+        return;
+      } catch {}
+    }
+    try { await postJson("system", { action: "restart-service" }); }
+    catch (e) { flash(String(e.message || e)); setActionBusy(null); return; }
+    setConnected(null);
+    setTimeout(() => { pull().finally(() => setActionBusy(null)); }, 3500);
+  };
   const addTask = (appId) => post("task", { slug: appId, action: "add", task: { id: nid("T"), title: "New task", status: "queued", difficulty: "medium", deps: [], ac: "Define acceptance criteria", files: "—" } });
   const deleteTask = (appId, tid) => {
     const app = apps.find((x) => x.id === appId);
@@ -454,7 +485,7 @@ export default function FleetView() {
     }
   };
 
-  if (connected === false && apps.length === 0) return <Disconnected onRetry={pull} />;
+  if (connected === false && apps.length === 0) return <Disconnected onRetry={pull} onRestartService={restartService} actionBusy={actionBusy} />;
   if (connected === null && apps.length === 0) return <Connecting />;
 
   return (
@@ -501,7 +532,7 @@ export default function FleetView() {
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col">
-        {view === "overview" && <Overview stats={stats} apps={filtered} onToggle={toggleLoop} onOpen={openApp} connected={connected} updatedAt={updatedAt} onRefresh={pull} post={post} fleetPause={fleetPause} lastPass={lastPass} current={current} milestones={milestones} onGoApprovals={() => setView("approvals")} onResume={() => { post("loop", { slug: "*", action: "resume" }); flash("Resumed — the fleet picks up on the next tick"); }} onboardingIncomplete={onboarding && onboarding.completed === false} onOpenOnboarding={() => setOnboardingOpen(true)} />}
+        {view === "overview" && <Overview stats={stats} apps={filtered} onToggle={toggleLoop} onOpen={openApp} connected={connected} updatedAt={updatedAt} onRefresh={pull} post={post} fleetPause={fleetPause} lastPass={lastPass} current={current} milestones={milestones} onGoApprovals={() => setView("approvals")} onResume={() => { post("loop", { slug: "*", action: "resume" }); flash("Resumed — the fleet picks up on the next tick"); }} onboardingIncomplete={onboarding && onboarding.completed === false} onOpenOnboarding={() => setOnboardingOpen(true)} onRunNow={runNow} onRestartService={restartService} actionBusy={actionBusy} />}
         {view === "approvals" && <Approvals approvals={approvals} apps={apps} onResolve={resolveApproval} onOpen={openApp} />}
         {view === "trust" && <TrustPanel flash={flash} />}
         {view === "providers" && <SettingsPanel apps={apps} fleet={fleetConfig} flash={flash} pull={pull} setFleetConfig={setFleetConfig} />}
@@ -539,15 +570,17 @@ function Boxesish() {
 function Connecting() {
   return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center gap-3"><div className="w-5 h-5 border-2 border-slate-700 border-t-indigo-500 rounded-full animate-spin" />Connecting to the fleet service…</div>;
 }
-function Disconnected({ onRetry }) {
+function Disconnected({ onRetry, onRestartService, actionBusy }) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-300 flex items-center justify-center p-6">
       <div className="max-w-md text-center">
         <PlugZap className="w-12 h-12 mx-auto mb-4 text-amber-500" />
         <div className="text-lg font-semibold">Fleet service isn't running</div>
-        <p className="text-sm text-slate-400 mt-2">This dashboard only shows real loop state — there's no demo data. Start the local service, then reload.</p>
-        <pre className="text-left text-xs bg-slate-900 border border-slate-800 rounded-lg p-3 mt-4 overflow-x-auto">cd fleet/runner && npm run serve:watch</pre>
-        <button onClick={onRetry} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><RefreshCw className="w-4 h-4" />Retry</button>
+        <p className="text-sm text-slate-400 mt-2">FleetLoops only shows real loop state. Reopen the app or use the FleetLoops menu bar item to restart the service, then retry.</p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <button onClick={onRestartService} disabled={!!actionBusy} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"><RefreshCw className="w-4 h-4" />Restart service</button>
+          <button onClick={onRetry} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800"><Wifi className="w-4 h-4" />Retry</button>
+        </div>
       </div>
     </div>
   );
@@ -557,7 +590,7 @@ function SideItem({ active, onClick, icon: Icon, label, badge }) {
   return <button onClick={onClick} className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "night-active text-indigo-300 font-medium" : "hover:bg-slate-800 text-slate-300"}`}><Icon className="w-4 h-4" /><span>{label}</span>{badge > 0 && <span className="ml-auto text-[11px] bg-rose-500 text-white rounded-full px-1.5 py-0.5">{badge}</span>}</button>;
 }
 
-function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefresh, post, fleetPause, lastPass, current, milestones, onGoApprovals, onResume, onboardingIncomplete, onOpenOnboarding }) {
+function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefresh, post, fleetPause, lastPass, current, milestones, onGoApprovals, onResume, onboardingIncomplete, onOpenOnboarding, onRunNow, onRestartService, actionBusy }) {
   // HEARTBEAT v2: per-app completions, plus what the tick is doing right now. A single app's
   // real agent run can take an hour — that's "working", not "stalled". Alarm ONLY when nothing
   // has completed recently AND nothing is in flight (or one app has hogged >95 min).
@@ -571,6 +604,8 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
         <div className="flex items-center gap-3">
           {current && <span className="text-[11px] text-emerald-400/90 inline-flex items-center gap-1" title={`since ${current.since}`}><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />working: {current.app} · {Math.max(1, Math.round(curAge))} min</span>}
           {!current && lastPass && <span className={`text-[11px] ${stepAge > 40 ? "text-amber-400" : "text-slate-500"}`} title={lastPass.at}>last step: {lastPass.app} {timeAgo(lastPass.at)}{lastPass.live ? "" : " (dry-run)"}</span>}
+          <button onClick={onRunNow} disabled={!!actionBusy} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><Play className="w-3.5 h-3.5" />{actionBusy === "run" ? "Running" : "Run now"}</button>
+          <button onClick={onRestartService} disabled={!!actionBusy} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"><RefreshCw className="w-3.5 h-3.5" />Restart service</button>
           <LiveTag connected={connected} updatedAt={updatedAt} onRefresh={onRefresh} />
         </div>
       } />
@@ -590,8 +625,9 @@ function Overview({ stats, apps, onToggle, onOpen, connected, updatedAt, onRefre
             <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div className="flex-1 text-sm">
               <div className="font-semibold text-amber-200">{hogging ? `One pass has been working on ${current.app} for ${Math.round(curAge)} minutes` : `Nothing has finished ${stepAge === null ? "since the service started" : `in ${Math.round(stepAge)} minutes`} and nothing is running`}</div>
-              <div className="text-amber-200/80 mt-0.5">{hogging ? "Long runs can be legitimate, but past ~95 minutes it's usually wedged — a service restart (double-click Fleet) safely recovers it." : "The scheduler looks wedged. Double-click Fleet on your Desktop to restart it safely — the engine recovers interrupted work automatically."}</div>
+              <div className="text-amber-200/80 mt-0.5">{hogging ? "Long runs can be legitimate, but past ~95 minutes the safest recovery is an app-controlled service restart." : "The scheduler looks wedged. Restart the service from here; interrupted work is recovered automatically."}</div>
             </div>
+            <button onClick={onRestartService} disabled={!!actionBusy} className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-400 text-slate-950 hover:bg-amber-300 disabled:opacity-40">Restart service</button>
           </div>
         )}
         {fleetPause && (
@@ -1086,6 +1122,7 @@ function ProvidersPanel({ flash, embedded = false }) {
   return <><Header title="Providers &amp; keys" subtitle="Connect a coding agent — a CLI you've signed into, or an API key you bring" />{body}</>;
 }
 function CliCard({ p, flash, reload, setProviders }) {
+  const [auth, setAuth] = useState(null);
   const statusText = providerStatusText(p);
   const cliName = providerCliName(p);
   const statusTone = p.connected ? "text-emerald-300" : p.installed ? "text-amber-300" : "text-slate-400";
@@ -1109,6 +1146,10 @@ function CliCard({ p, flash, reload, setProviders }) {
     fetch(`${API}/api/provider-cli`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: p.id, action: "login" }) })
     .then((r) => r.json()).then(async (d) => {
       if (!d.ok) throw new Error(d.error || "login failed");
+      if (d.authUrl && d.deviceCode) {
+        setAuth(d);
+        try { window.open(d.authUrl, "_blank", "noopener"); } catch {}
+      }
       flash(d.note || `Opened ${d.command}`);
       reload?.();
       const ready = await pollProviderReady(p.id, setProviders || null);
@@ -1131,6 +1172,22 @@ function CliCard({ p, flash, reload, setProviders }) {
       <div className="mt-3 flex gap-2">
         <button onClick={login} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
         <button onClick={refresh} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+      </div>
+      <CliAuthBox auth={auth} onRefresh={refresh} onClear={() => setAuth(null)} />
+    </div>
+  );
+}
+function CliAuthBox({ auth, onRefresh, onClear }) {
+  if (!auth?.authUrl || !auth?.deviceCode) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3" onClick={(e) => e.stopPropagation()}>
+      <div className="text-xs font-semibold text-indigo-100">Browser sign-in</div>
+      <div className="text-xs text-indigo-100/75 mt-1">Open the sign-in page, enter this one-time code, then check the connection.</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <code className="font-mono text-base tracking-wider text-white bg-slate-950 border border-slate-700 rounded px-2 py-1">{auth.deviceCode}</code>
+        <a href={auth.authUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><ExternalLink className="w-3.5 h-3.5" />Open browser</a>
+        <button onClick={onRefresh} className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/40 text-indigo-100 hover:bg-indigo-500/10">Check connection</button>
+        <button onClick={onClear} className="text-xs px-2 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">Dismiss</button>
       </div>
     </div>
   );
@@ -1244,6 +1301,7 @@ function CostPanel() {
 function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onDone }) {
   const [step, setStep] = useState(Math.max(0, Math.min(4, onboarding.step || 0)));
   const [providers, setProviders] = useState([]);
+  const [cliAuth, setCliAuth] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [providerId, setProviderId] = useState(onboarding.providerId || "");
@@ -1309,6 +1367,10 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   };
   const connectCli = (id) => run(async () => {
     const d = await postJson("provider-cli", { provider: id, action: "login" });
+    if (d.authUrl && d.deviceCode) {
+      setCliAuth((prev) => ({ ...prev, [id]: d }));
+      try { window.open(d.authUrl, "_blank", "noopener"); } catch {}
+    }
     flash(d.note || `Opened ${d.command}`);
     await loadProviders();
     const ready = await pollProviderReady(id, setProviders);
@@ -1415,7 +1477,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
         <div className="flex-1 overflow-y-auto p-5">
           {onboarding.oldFleet?.detected && !onboarding.migration?.choice && <MigrationPrompt onboarding={onboarding} postJson={postJson} pull={pull} flash={flash} />}
           {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 p-3 text-sm" role="alert">{error}</div>}
-          {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} />}
+          {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} cliAuth={cliAuth} setCliAuth={setCliAuth} />}
           {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
           {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} brainText={brainText} setBrainText={setBrainText} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
           {step === 3 && <StepDone gates={gates} setGates={setGates} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} />}
@@ -1455,7 +1517,7 @@ function MigrationPrompt({ onboarding, postJson, pull, flash }) {
   );
 }
 
-function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, refreshCliProvider, loadProviders, flash }) {
+function StepConnect({ providers, providerId, selectedProvider, chooseProvider, connectCli, refreshCliProvider, loadProviders, flash, cliAuth, setCliAuth }) {
   const clis = providers.filter((p) => p.kind === "agentic-cli");
   const apis = providers.filter((p) => p.kind === "api");
   const chooseReadyProvider = (p) => {
@@ -1474,12 +1536,13 @@ function StepConnect({ providers, providerId, selectedProvider, chooseProvider, 
         <div className="space-y-2">
           {clis.map((p) => <PathCard key={p.id} active={providerId === p.id} icon={Cpu} title={p.label} meta={providerStatusText(p)} good={p.connected} onClick={() => chooseReadyProvider(p)}>
             <div className="text-xs text-slate-500 mt-2">{p.detail || p.blurb}</div>
-            {!p.installed && <div className="text-xs text-amber-300/80 mt-1">Install the CLI first, then refresh this status. FleetLoops cannot continue with a missing command-line tool.</div>}
+            {!p.installed && <div className="text-xs text-amber-300/80 mt-1">Install the CLI first or use an API key instead. FleetLoops will not select a missing CLI.</div>}
             {p.installed && !p.connected && <div className="text-xs text-amber-300/80 mt-1">Finish sign-in or fix the account issue, then refresh. This CLI is not selectable yet.</div>}
             <div className="flex gap-2 mt-3">
               <button onClick={(e) => { e.stopPropagation(); connectCli(p.id); }} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">{p.connected ? "Sign in again" : p.installed ? "Open sign-in" : "Install first"}</button>
               <button onClick={(e) => { e.stopPropagation(); p.kind === "agentic-cli" ? refreshCliProvider(p.id) : (loadProviders(), flash("Provider status refreshed")); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
             </div>
+            <CliAuthBox auth={cliAuth?.[p.id]} onRefresh={(e) => { e?.stopPropagation?.(); refreshCliProvider(p.id); }} onClear={(e) => { e?.stopPropagation?.(); setCliAuth((prev) => ({ ...prev, [p.id]: null })); }} />
           </PathCard>)}
         </div>
       </Section>

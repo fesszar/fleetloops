@@ -16,6 +16,7 @@ final class EngineProcess {
     private var restartDelay: TimeInterval = 1
     private let maxDelay: TimeInterval = 30
     private var intentionalStop = false
+    private var suppressNextTerminationRestart = false
 
     private(set) var port: Int?
     private(set) var token: String?
@@ -45,6 +46,9 @@ final class EngineProcess {
     }
 
     func restart() {
+        if process?.isRunning == true {
+            suppressNextTerminationRestart = true
+        }
         process?.terminate()
         process = nil
         start()
@@ -127,6 +131,10 @@ final class EngineProcess {
 
         p.terminationHandler = { [weak self] _ in
             guard let self = self, !self.intentionalStop else { return }
+            if self.suppressNextTerminationRestart {
+                self.suppressNextTerminationRestart = false
+                return
+            }
             NSLog("FleetLoops: engine exited — scheduling restart")
             self.scheduleRestart()
         }

@@ -1315,6 +1315,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   const [appId, setAppId] = useState(onboarding.appId || "");
   const [understanding, setUnderstanding] = useState(null);
   const [brainText, setBrainText] = useState("");
+  const [brainDirty, setBrainDirty] = useState(false);
+  const [deepText, setDeepText] = useState("");
+  const [deepReady, setDeepReady] = useState(false);
   const [brainApproved, setBrainApproved] = useState(!!onboarding.brainApproved);
   const [gates, setGates] = useState([]);
   const [gatesSaved, setGatesSaved] = useState(!!onboarding.gatesApproved);
@@ -1329,6 +1332,22 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   useEffect(() => { loadProviders(); }, [loadProviders]);
   useRefreshOnFocus(loadProviders);
   useEffect(() => { setStep(Math.max(0, Math.min(4, onboarding.step || 0))); }, [onboarding.step]);
+  useEffect(() => {
+    if (step !== 2 || !appId || !onboarding?.brain) return;
+    const b = onboarding.brain;
+    setUnderstanding((prev) => prev ? { ...prev, brain: b, analyzing: !!b.analyzing } : prev);
+    if (b.status === "pending" && b.origin === "ai") {
+      fetch(`${API}/api/brain?appId=${encodeURIComponent(appId)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.proposed) return;
+          setUnderstanding((prev) => prev ? { ...prev, brain: b, analyzing: false, updatedAt: new Date().toISOString() } : { brain: b, analyzing: false, updatedAt: new Date().toISOString() });
+          if (brainDirty) { setDeepText(d.proposed); setDeepReady(true); }
+          else { setBrainText(d.proposed); setDeepReady(false); }
+        })
+        .catch(() => {});
+    }
+  }, [step, appId, onboarding?.brain?.status, onboarding?.brain?.origin, onboarding?.brain?.analyzing, brainDirty]);
   useEffect(() => {
     const oldProject = window.fleetNativeProjectPicked;
     const oldDocs = window.fleetNativeDocumentsPicked;
@@ -1416,6 +1435,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
     const d = await postJson("onboarding/understand", { appId: id, mode, brief: mode === "scratch" ? scratchBrief : "", documents });
     setUnderstanding(d);
     setBrainText(d.proposed || "");
+    setBrainDirty(false);
+    setDeepText("");
+    setDeepReady(false);
     setGates(d.gates || []);
     setBrainApproved(false);
     setGatesSaved(false);
@@ -1479,7 +1501,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
           {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 p-3 text-sm" role="alert">{error}</div>}
           {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} cliAuth={cliAuth} setCliAuth={setCliAuth} />}
           {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
-          {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} brainText={brainText} setBrainText={setBrainText} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
+          {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} onboardingBrain={onboarding.brain} brainText={brainText} setBrainText={(v) => { setBrainDirty(true); setBrainText(v); }} brainDirty={brainDirty} deepReady={deepReady} onUseDeep={() => { setBrainText(deepText); setBrainDirty(false); setDeepReady(false); }} onKeepEdits={() => setDeepReady(false)} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
           {step === 3 && <StepDone gates={gates} setGates={setGates} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} />}
           {step === 4 && <StepLaunch app={activeApp} launch={launch} busy={busy} />}
         </div>
@@ -1659,7 +1681,11 @@ function basenameSafe(path) {
   return String(path || "").split("/").filter(Boolean).pop() || "document";
 }
 
-function StepUnderstand({ appId, app, understanding, brainText, setBrainText, brainApproved, study, approveBrain, busy }) {
+function StepUnderstand({ appId, app, understanding, onboardingBrain, brainText, setBrainText, brainDirty, deepReady, onUseDeep, onKeepEdits, brainApproved, study, approveBrain, busy }) {
+  const brain = understanding?.brain || onboardingBrain || {};
+  const origin = brain.origin || "template";
+  const analyzing = !!(understanding?.analyzing || brain.analyzing);
+  const failed = !!brain.failed;
   return (
     <div className="grid lg:grid-cols-[.9fr_1.1fr] gap-4">
       <Section title="Project understanding" hint="This is generated from the real local repo or scratch brief and saved as a proposed project brain.">
@@ -1668,6 +1694,14 @@ function StepUnderstand({ appId, app, understanding, brainText, setBrainText, br
             <div className="text-sm text-slate-300">{app?.name || appId}</div>
             <div className="text-xs text-slate-500 font-mono truncate mt-1">{app?.repo || ""}</div>
             <button disabled={busy} onClick={study} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"><Brain className="w-4 h-4" />{understanding ? "Re-study" : "Study project"}</button>
+            {brainText && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Chip className={origin === "ai" ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-amber-500/10 text-amber-300 border-amber-500/30"}>
+                  {origin === "ai" ? "Deep AI analysis" : "Quick local summary"}
+                </Chip>
+                {analyzing && <Chip className="bg-indigo-500/10 text-indigo-300 border-indigo-500/30">studying codebase</Chip>}
+              </div>
+            )}
             {understanding?.facts?.length > 0 && (
               <div className="mt-4 space-y-2">
                 {understanding.facts.map((f, i) => <div key={i} className="rounded-lg bg-slate-950 border border-slate-800 p-2.5"><div className="text-[11px] uppercase text-slate-500">{f.label}</div><div className="text-sm text-slate-300 mt-0.5">{f.value}</div></div>)}
@@ -1679,7 +1713,35 @@ function StepUnderstand({ appId, app, understanding, brainText, setBrainText, br
       <Section title="Brain draft" hint="Review, edit if needed, then approve. Live work cannot start until this is approved.">
         {brainText ? (
           <>
+            {analyzing && (
+              <div className="mb-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-sm text-indigo-100" role="status">
+                FleetLoops is studying your codebase in depth. You can review this quick summary meanwhile; it will update when the deep analysis is ready.
+              </div>
+            )}
+            {!analyzing && origin === "ai" && (
+              <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100" role="status">
+                Updated — deep analysis complete.
+              </div>
+            )}
+            {failed && (
+              <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                Deep analysis did not complete. You can continue with this summary and re-run analysis later.
+              </div>
+            )}
+            {!analyzing && origin === "template" && !failed && (
+              <div className="mb-3 rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-300">
+                This is a quick local summary. A deeper AI analysis will be proposed after launch when a provider can study the repo.
+              </div>
+            )}
+            {deepReady && (
+              <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100 flex items-center gap-2">
+                <span className="flex-1">Deep analysis is ready.</span>
+                <button onClick={onUseDeep} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400">View it</button>
+                <button onClick={onKeepEdits} className="text-xs px-2.5 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/10">Keep my edits</button>
+              </div>
+            )}
             <textarea value={brainText} onChange={(e) => setBrainText(e.target.value)} rows={20} className="w-full rounded-lg px-3 py-2 text-xs font-mono" />
+            {brainDirty && <div className="mt-1 text-[11px] text-slate-500">Your edits are preserved if a deeper analysis finishes in the background.</div>}
             <button disabled={busy || brainText.trim().length < 100 || brainApproved} onClick={approveBrain} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><CheckCircle2 className="w-4 h-4" />{brainApproved ? "Brain approved" : "Looks right — approve"}</button>
           </>
         ) : <EmptyPanel icon={Brain} title="No brain draft yet" body="Click Study project to generate a proposed project brain from real local context." />}

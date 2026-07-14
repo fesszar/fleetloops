@@ -20,6 +20,11 @@ import { hasAgentProvider } from "./providers/registry.mjs";
 
 const HERE = new URL(".", import.meta.url);
 const COMPREHEND_TEMPLATE = (() => { try { return readFileSync(new URL("../prompts/comprehend-project.md", HERE), "utf8"); } catch { return ""; } })();
+let explainProject = runExplainer;
+
+export function setBrainExplainerForTests(fn) {
+  explainProject = typeof fn === "function" ? fn : runExplainer;
+}
 
 function brainDir(app) { return join(expandHome(app.repo || ""), ".fleet"); }
 export function brainFile(app) { return join(brainDir(app), "project-brain.md"); }            // ACTIVE
@@ -48,7 +53,7 @@ export function readBrain(app, { cap = 7000 } = {}) {
 // and writes a structured understanding to the PROPOSED file (awaiting owner review). If the
 // owner asked for a re-analysis, their notes + the prior version are fed back in so the result
 // is a refinement, not a fresh guess. Returns the proposed text (or "" on failure).
-export async function comprehendProject(app, fleet, { notes = "", priorBrain = "" } = {}) {
+export async function comprehendProject(app, fleet, { notes = "", priorBrain = "", timeoutMs = 8 * 60 * 1000 } = {}) {
   if (!COMPREHEND_TEMPLATE) return "";
   if (!hasAgentProvider(app)) return "";
   let prompt = COMPREHEND_TEMPLATE
@@ -60,7 +65,7 @@ export async function comprehendProject(app, fleet, { notes = "", priorBrain = "
     prompt += `\n\n## REFINEMENT REQUESTED BY THE OWNER\nThe owner reviewed your previous comprehension and wants it improved. Treat their notes as authoritative — correct, expand, and re-verify against the code.\n\n### Owner's notes/corrections\n${notes || "(they edited the document directly — reconcile with the prior version below)"}\n\n### Your previous version (revise this, don't start from scratch)\n${(priorBrain || "").slice(0, 6000)}`;
   }
   let raw = "";
-  try { raw = await runExplainer(app, prompt, { reasoning: "high", timeoutMs: 8 * 60 * 1000 }); } catch { return ""; }
+  try { raw = await explainProject(app, prompt, { reasoning: "high", timeoutMs }); } catch { return ""; }
   const body = extractBrain(raw);
   if (!body || body.length < 200) return "";
   try {
@@ -134,16 +139,26 @@ export function extractBrain(raw) {
 export async function proposeBrainIfNeeded(app, fleet, state) {
   if (!fleet || fleet.brain === false) return { acted: false };
   if (!hasAgentProvider(app)) return { acted: false };
-  if (hasApprovedBrain(app)) return { acted: false };
+  const approved = hasApprovedBrain(app);
+  const origin = (state.brain && state.brain.origin) || (approved ? "ai" : null);
+  const upgradeTemplate = approved && origin === "template" && state.brain?.upgradeProposed !== true;
+  if (approved && !upgradeTemplate) return { acted: false };
   const bs = brainStatus(state);
   if (bs === "pending") return { acted: false };       // already waiting on the owner
-  if (bs !== "none" && bs !== "refining") return { acted: false };
-  const notes = (state.brain && state.brain.notes) || "";
-  const prior = bs === "refining" ? readProposed(app) : "";
+  if (!upgradeTemplate && bs !== "none" && bs !== "refining") return { acted: false };
+  const notes = upgradeTemplate
+    ? "This brain was generated from a local template without AI. Upgrade it: verify everything against the actual code, correct errors, and go much deeper on architecture, conventions, and risks."
+    : ((state.brain && state.brain.notes) || "");
+  const prior = upgradeTemplate ? readBrain(app) : (bs === "refining" ? readProposed(app) : "");
   let proposed = "";
   try { proposed = await comprehendProject(app, fleet, { notes, priorBrain: prior }); } catch {}
-  if (!proposed) { state.brain = { status: "none", at: new Date().toISOString() }; return { acted: true, status: "failed" }; }
-  state.brain = { status: "pending", version: ((state.brain && state.brain.version) || 0) + 1, notes: "", at: new Date().toISOString() };
+  if (!proposed) {
+    state.brain = upgradeTemplate
+      ? { ...(state.brain || {}), status: "approved", origin: "template", at: new Date().toISOString() }
+      : { status: "none", at: new Date().toISOString() };
+    return { acted: true, status: "failed" };
+  }
+  state.brain = { ...(state.brain || {}), status: "pending", origin: "ai", version: ((state.brain && state.brain.version) || 0) + 1, notes: "", at: new Date().toISOString(), ...(upgradeTemplate ? { upgradeProposed: true, upgradedFrom: "template" } : {}) };
   state.escalations = state.escalations || [];
   if (!state.escalations.some((e) => e.taskId === "__brain__")) {
     state.escalations.push({ taskId: "__brain__", title: `Review ${app.name}'s project understanding`, type: "brain", reason: "The fleet studied this codebase and wrote how it understands the app. Approve it (or edit / ask for a re-analysis) — every future run reads it, so getting it right makes the work deeply contextual.", at: new Date().toISOString() });

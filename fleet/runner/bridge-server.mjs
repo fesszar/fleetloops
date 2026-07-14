@@ -36,8 +36,10 @@ import {
   applyOnboardingAction,
   approveOnboardingBrain,
   attachDocumentsToApp,
+  beginOnboardingBrainAnalysis,
   launchOnboardingApp,
   publicOnboarding,
+  publicOnboardingBrain,
   saveOnboardingGates,
   writeProposedBrain,
 } from "./onboarding.mjs";
@@ -505,11 +507,17 @@ async function api(req, res, path) {
       const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
       const app = (cfg.apps || []).find((a) => a.slug === slug);
       if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
+      const mode = body.mode || cfg.fleet?.onboarding?.mode || app.onboarding?.mode || "code";
+      const currentBrain = publicOnboardingBrain(app, cfg.fleet || {});
+      if (currentBrain.analyzing) {
+        return send(res, 200, { ok: true, appId: app.slug, proposed: (await import("./brain.mjs")).readProposed(app), facts: [], gates: app.exitConditions || [], copiedDocs: [], analyzing: true, brain: currentBrain });
+      }
       const copiedDocs = attachDocumentsToApp(app, body.files || body.documents || []);
-      const result = writeProposedBrain(app, { mode: body.mode || cfg.fleet?.onboarding?.mode || app.onboarding?.mode || "code", brief: body.brief || app.northStar || "", notes: body.notes || "" });
-      applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: app.slug, mode: body.mode || app.onboarding?.mode || "code", projectDraft: { ...(cfg.fleet?.onboarding?.projectDraft || {}), copiedDocs } });
+      const result = writeProposedBrain(app, { mode, brief: body.brief || app.northStar || "", notes: body.notes || "" });
+      const analysis = beginOnboardingBrainAnalysis(app, cfg.fleet || {}, { mode });
+      applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: app.slug, mode, projectDraft: { ...(cfg.fleet?.onboarding?.projectDraft || {}), copiedDocs } });
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
-      return send(res, 200, { ...result, copiedDocs });
+      return send(res, 200, { ...result, copiedDocs, analyzing: analysis.analyzing, brain: analysis.brain });
     } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
   }
 
@@ -716,7 +724,7 @@ async function api(req, res, path) {
     const { approveBrain } = await import("./brain.mjs");
     if (body.action === "approve") {
       const r = approveBrain(appCfg, { editedText: body.editedText || "" });
-      if (r.ok) withState(body.slug, (s) => { s.brain = { status: "approved", version: (s.brain && s.brain.version) || 1, at: new Date().toISOString() }; s.escalations = (s.escalations || []).filter((e) => e.taskId !== "__brain__"); pushLog(s, "BRAIN: you approved the project understanding — every run now reads it"); });
+      if (r.ok) withState(body.slug, (s) => { s.brain = { ...(s.brain || {}), status: "approved", origin: s.brain?.origin || "ai", version: (s.brain && s.brain.version) || 1, at: new Date().toISOString() }; delete s.brain.analyzeStartedAt; s.escalations = (s.escalations || []).filter((e) => e.taskId !== "__brain__"); pushLog(s, "BRAIN: you approved the project understanding — every run now reads it"); });
       return send(res, r.ok ? 200 : 409, r);
     }
     if (body.action === "refine") {

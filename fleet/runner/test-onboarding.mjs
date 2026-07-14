@@ -45,6 +45,7 @@ ok(existsSync(join(repo, ".fleet", "project-brain.proposed.md")), "brain proposa
 
 const approved = approveOnboardingBrain(added.app, brain.proposed);
 ok(approved.ok && existsSync(join(repo, ".fleet", "project-brain.md")), "brain approval promotes proposed brain to active brain");
+ok(loadState(added.app, cfg.fleet).brain.origin === "template", "brain approval preserves template origin metadata");
 
 const gates = saveOnboardingGates(added.app, cfg.fleet, brain.gates);
 ok(gates.ok && added.app.exitConditions.length >= 3, "gate setup persists enabled Definition-of-Done gates");

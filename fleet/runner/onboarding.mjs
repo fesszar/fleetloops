@@ -2,10 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSy
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { CONFIG_FILE, loadState, saveState, expandHome } from "./loop.mjs";
-import { proposedFile, brainFile } from "./brain.mjs";
+import { comprehendProject, proposedFile, brainFile } from "./brain.mjs";
 import { normalizeGateDraft } from "./project-onboard.mjs";
+import { hasAgentProvider, resolveProvider } from "./providers/registry.mjs";
+import { pushLog } from "./util.mjs";
 
 export const ONBOARDING_VERSION = "night-deck-1";
+export const BRAIN_ANALYZE_STALE_MS = 10 * 60 * 1000;
 
 const clean = (v) => String(v || "").trim();
 const iso = () => new Date().toISOString();
@@ -67,10 +70,43 @@ export function oldFleetSummary() {
 
 export function publicOnboarding(cfg) {
   const ob = normalizeOnboarding(cfg);
+  const app = (cfg.apps || []).find((a) => a.slug === ob.appId);
   return {
     ...ob,
     oldFleet: oldFleetSummary(),
+    brain: app ? publicOnboardingBrain(app, cfg.fleet || {}) : { status: "none", origin: "ai", analyzing: false },
   };
+}
+
+function brainMeta(state) {
+  const brain = state?.brain || {};
+  const status = brain.status || "none";
+  const origin = brain.origin || (status === "none" ? "ai" : "ai");
+  return { status, origin, analyzing: status === "analyzing", analyzeStartedAt: brain.analyzeStartedAt || null, failed: !!brain.analyzeFailedAt && origin === "template" };
+}
+
+function hasOnboardingAnalysisProvider(app) {
+  if (!hasAgentProvider(app)) return false;
+  if (resolveProvider(app)) return true;
+  const adapter = app?.agent?.adapter || "";
+  return !!adapter && adapter !== "manual" && adapter !== "shell";
+}
+
+export function recoverStaleBrainAnalysis(app, fleet = {}) {
+  const state = loadState(app, fleet || {});
+  if (state.brain?.status !== "analyzing") return { state, recovered: false };
+  const started = Date.parse(state.brain.analyzeStartedAt || state.brain.at || "");
+  if (Number.isFinite(started) && Date.now() - started <= BRAIN_ANALYZE_STALE_MS) return { state, recovered: false };
+  state.brain = { ...(state.brain || {}), status: "pending", origin: "template", at: iso(), analyzeFailedAt: iso() };
+  delete state.brain.analyzeStartedAt;
+  pushLog(state, "BRAIN: deep comprehension timed out; continuing with the quick local summary");
+  saveState(state);
+  return { state, recovered: true };
+}
+
+export function publicOnboardingBrain(app, fleet = {}) {
+  const { state } = recoverStaleBrainAnalysis(app, fleet || {});
+  return brainMeta(state);
 }
 
 function uniqueSlug(cfg, slug) {
@@ -284,21 +320,57 @@ ${notes || "(none yet)"}
   mkdirSync(dir, { recursive: true });
   writeFileSync(proposedFile(app), body.endsWith("\n") ? body : body + "\n");
   const state = loadState(app, {});
-  state.brain = { status: "pending", version: ((state.brain && state.brain.version) || 0) + 1, notes: "", at: iso(), onboarding: true };
+  state.brain = { status: "pending", origin: "template", version: ((state.brain && state.brain.version) || 0) + 1, notes: "", at: iso(), onboarding: true, upgradeProposed: false };
   state.escalations = (state.escalations || []).filter((e) => e.taskId !== "__brain__");
   saveState(state);
-  return { ok: true, appId: app.slug, proposed: body, facts, gates: draftGatesForApp(app, { mode, brief }) };
+  return { ok: true, appId: app.slug, proposed: body, facts, gates: draftGatesForApp(app, { mode, brief }), brain: brainMeta(state), analyzing: false };
 }
 
 export function approveOnboardingBrain(app, editedText = "") {
   const text = clean(editedText) || safeRead(proposedFile(app), 40000);
   if (text.length < 100) return { ok: false, status: 409, error: "brain text is too short to approve" };
+  const state = loadState(app, {});
+  const origin = state.brain?.origin || "template";
   mkdirSync(dirname(brainFile(app)), { recursive: true });
   writeFileSync(brainFile(app), text.endsWith("\n") ? text : text + "\n");
-  const state = loadState(app, {});
-  state.brain = { status: "approved", version: (state.brain && state.brain.version) || 1, at: iso(), onboarding: true };
+  state.brain = { ...(state.brain || {}), status: "approved", origin, version: (state.brain && state.brain.version) || 1, at: iso(), onboarding: true, ...(origin === "template" ? { upgradeProposed: state.brain?.upgradeProposed === true } : {}) };
+  delete state.brain.analyzeStartedAt;
   saveState(state);
   return { ok: true };
+}
+
+export function beginOnboardingBrainAnalysis(app, fleet = {}, { mode = "code" } = {}) {
+  const { state } = recoverStaleBrainAnalysis(app, fleet || {});
+  if (state.brain?.status === "analyzing") return { analyzing: true, brain: brainMeta(state), started: false };
+  if (mode === "scratch" || !hasOnboardingAnalysisProvider(app)) return { analyzing: false, brain: brainMeta(state), started: false };
+  const startedAt = iso();
+  state.brain = { ...(state.brain || {}), status: "analyzing", origin: "template", analyzeStartedAt: startedAt, at: startedAt, onboarding: true };
+  saveState(state);
+  const startedVersion = state.brain.version || 0;
+  comprehendProject(app, fleet || {}, { timeoutMs: 5 * 60 * 1000 })
+    .then((proposed) => {
+      const next = loadState(app, fleet || {});
+      if (next.brain?.status !== "analyzing" || next.brain?.analyzeStartedAt !== startedAt) return;
+      if (!proposed || proposed.length < 200) {
+        next.brain = { ...(next.brain || {}), status: "pending", origin: "template", at: iso(), analyzeFailedAt: iso() };
+        delete next.brain.analyzeStartedAt;
+        pushLog(next, "BRAIN: deep comprehension didn't complete; continuing with the quick local summary");
+      } else {
+        next.brain = { ...(next.brain || {}), status: "pending", origin: "ai", version: startedVersion + 1, notes: "", at: iso(), onboarding: true };
+        delete next.brain.analyzeStartedAt;
+        pushLog(next, "BRAIN: deep comprehension ready");
+      }
+      saveState(next);
+    })
+    .catch(() => {
+      const next = loadState(app, fleet || {});
+      if (next.brain?.status !== "analyzing" || next.brain?.analyzeStartedAt !== startedAt) return;
+      next.brain = { ...(next.brain || {}), status: "pending", origin: "template", at: iso(), analyzeFailedAt: iso() };
+      delete next.brain.analyzeStartedAt;
+      pushLog(next, "BRAIN: deep comprehension didn't complete; continuing with the quick local summary");
+      saveState(next);
+    });
+  return { analyzing: true, brain: brainMeta({ brain: state.brain }), started: true };
 }
 
 export function saveOnboardingGates(app, fleet, gates = []) {

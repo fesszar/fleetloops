@@ -23,7 +23,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { pickAdapter, runExplainer } from "./adapters.mjs";
+import { runExplainer } from "./adapters.mjs";
 import { runGates } from "./gates.mjs";
 import { writeJsonAtomic, readJsonSafe, pushLog, expandHome as xHome, notify, setFleetPause, getFleetPause, clearFleetPause } from "./util.mjs";
 import { consensusReview, parseReview as parseReviewC } from "./consensus.mjs";
@@ -32,6 +32,7 @@ import { harvestNewTasks } from "./planner.mjs";
 import { readBrain, recordLearnings, proposeBrainIfNeeded } from "./brain.mjs";
 import { recordCost, budgetExceeded } from "./cost.mjs";
 import { hasAgentProvider, resolveProvider, resolveModel } from "./providers/registry.mjs";
+import { runAgentWithFailover } from "./providers/failover.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dir, "..");
@@ -540,14 +541,40 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
   // generate + execute. The agent runs INSIDE the worktree (point {{REPO}} at it).
   task.status = "running";
   saveState(state);
-  const adapter = pickAdapter(app);
-  const agentApp = (!dryRun && isAgent && task.worktree) ? { ...app, repo: task.worktree } : app;
-  const { report, failure, usage } = await adapter({ app: agentApp, fleet, prompt, dryRun, logFile: join(STATE_DIR, `${app.slug}.run.log`) });
+  const run = await runAgentWithFailover({
+    app,
+    fleet,
+    prompt,
+    dryRun,
+    logFile: join(STATE_DIR, `${app.slug}.run.log`),
+    runAttempt: async ({ app: attemptApp, adapter }) => {
+      const agentApp = (!dryRun && isAgent && task.worktree) ? { ...attemptApp, repo: task.worktree } : attemptApp;
+      return adapter({ app: agentApp, fleet, prompt, dryRun, logFile: join(STATE_DIR, `${app.slug}.run.log`) });
+    },
+    prepareFallback: async ({ from, to, notified }) => {
+      pushLog(state, `FAILOVER ${task.id}: ${from.provider.id} auth-failed -> trying ${to.provider.id}`);
+      if (!notified) {
+        notify(STATE_DIR, `${app.slug}: trying fallback provider`, `${from.provider.label} needs reconnection, so this run is continuing with ${to.provider.label}.`, { fleet });
+      }
+      if (!dryRun && isAgent) {
+        if (task.branch) {
+          const d = discardBranch(repoPath, task);
+          delete task.branch;
+          if (!d.ok) return { ok: false, reason: d.note || "could not discard failed branch" };
+        }
+        const wt = setupWorktree(repoPath, app.slug, task, branch, app);
+        if (!wt.ok) return { ok: false, reason: `worktree create failed: ${(wt.note || "").slice(-150)}` };
+        pushLog(state, `WORKTREE ${task.id}: ${branch} @ ${wt.wt}`);
+      }
+      return { ok: true };
+    },
+  });
+  const { report, failure, usage } = run;
   // Meter spend for raw-API providers (the harness returns `usage`; CLIs don't). Best-effort.
   if (usage && !dryRun) {
     try {
-      const provider = resolveProvider(app);
-      recordCost(STATE_DIR, { app: app.slug, phase: "task", provider: provider?.id, model: resolveModel(app, provider), usage, usd: usage.usd });
+      const provider = run.provider || resolveProvider(app);
+      recordCost(STATE_DIR, { app: app.slug, phase: "task", provider: provider?.id, model: run.model || resolveModel(app, provider), usage, usd: usage.usd });
     } catch {}
   }
 
@@ -572,13 +599,20 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
   if (!report) {
     if (!dryRun && isAgent && task.branch) { discardBranch(repoPath, task); delete task.branch; }
 
+    if (run.failoverResetError) {
+      const r = infraSetback(state, task, run.failoverResetError, fleet);
+      saveState(state);
+      return { slug: app.slug, action: r, task: task.id, reason: run.failoverResetError };
+    }
+
     // AUTH failure (expired codex/claude login, quota): not the task's fault. Pause the whole
     // fleet with ONE clear notification; don't burn this task's retries.
     if (failure === "auth") {
       task.status = "queued";
-      pushLog(state, `AUTH-PAUSE ${task.id}: agent CLI not authenticated / out of quota`);
-      setFleetPause(STATE_DIR, "Agent CLI authentication/quota problem — open FleetLoops Settings → Agents & keys to reconnect, or wait for quota reset. The fleet auto-retries in a few hours.");
-      notify(STATE_DIR, "Fleet paused", "The coding agent isn't authenticated or hit a usage limit. Open FleetLoops Settings → Agents & keys to reconnect.", { fleet });
+      const exhausted = run.failoverExhausted ? " (all fallback providers also failed)" : "";
+      pushLog(state, `AUTH-PAUSE ${task.id}: agent CLI/API not authenticated / out of quota${exhausted}`);
+      setFleetPause(STATE_DIR, `Agent authentication/quota problem${exhausted} — open FleetLoops Settings → Agents & keys to reconnect, or wait for quota reset. The fleet auto-retries in a few hours.`);
+      notify(STATE_DIR, "Fleet paused", `The coding agent isn't authenticated or hit a usage limit${exhausted}. Open FleetLoops Settings → Agents & keys to reconnect.`, { fleet });
       saveState(state);
       return { slug: app.slug, action: "fleet-paused", task: task.id, reason: "agent auth/quota" };
     }

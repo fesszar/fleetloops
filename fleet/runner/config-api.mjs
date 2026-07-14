@@ -60,10 +60,7 @@ export function publicFleetConfig(fleet = {}) {
       },
     },
     routing: {
-      routine: cleanString(fleet.routing?.routine) || "ollama",
-      standard: cleanString(fleet.routing?.standard) || "codex",
-      risky: cleanString(fleet.routing?.risky) || "openai",
-      fallback: Array.isArray(fleet.routing?.fallback) ? fleet.routing.fallback.map(cleanString).filter(Boolean).slice(0, 8) : ["codex", "openai", "anthropic"],
+      fallback: Array.isArray(fleet.routing?.fallback) ? fleet.routing.fallback.map(cleanString).filter(Boolean).slice(0, 8) : [],
     },
   };
 }
@@ -202,6 +199,9 @@ export function applyFleetConfigPatch(cfg, body = {}) {
   if (patch.routing !== undefined) {
     const r = patch.routing || {};
     fleet.routing = { ...(fleet.routing || {}) };
+    // Backward compatibility only: older configs/UI builds may still send tier-routing fields.
+    // P0-3 intentionally makes only routing.fallback active; routine/standard/risky are stored
+    // but are not exposed by publicFleetConfig and are not consumed by the runner.
     for (const key of ["routine", "standard", "risky"]) {
       if (r[key] !== undefined) {
         const v = cleanString(r[key]);

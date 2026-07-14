@@ -108,6 +108,11 @@ function normalizePolicy(value, fallback, allowed) {
   return allowed.includes(v) ? v : fallback;
 }
 
+export function defaultAgentCommand(providerId = "codex") {
+  if (providerId !== "codex") return "";
+  return `cd "{{REPO}}" && codex exec -c sandbox_workspace_write.network_access=true --sandbox workspace-write -c model_reasoning_effort={{REASONING}} - < "{{PROMPT_FILE}}"`;
+}
+
 export function normalizeGateDraft(gates = []) {
   return (Array.isArray(gates) ? gates : [])
     .filter((g) => g && g.enabled !== false && cleanString(g.say || g.text || g.title))
@@ -155,7 +160,7 @@ export function makeProjectConfig({ slug, name, repo, northStar }, det, isGit, o
     reasoning,
     ...providerPatch,
     northStar: cleanString(northStar) || `Make ${name} production-ready and keep it healthy.`,
-    agent: { adapter: "shell", command: `cd "{{REPO}}" && codex exec -c sandbox_workspace_write.network_access=true --sandbox workspace-write -c model_reasoning_effort={{REASONING}} - < "{{PROMPT_FILE}}"` },
+    agent: { adapter: "shell", command: defaultAgentCommand("codex") },
     triggers: ["command", "test-fail"],
     schedule: "-",
     retryCap: 3,

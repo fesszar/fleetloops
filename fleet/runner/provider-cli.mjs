@@ -16,7 +16,7 @@ function loginCommandFor(bin) {
   return `${bin} login`;
 }
 
-function which(bin) {
+export function which(bin) {
   if (!bin) return "";
   try {
     const r = spawnSync("bash", ["-lc", `command -v ${shellQuote(bin)}`], { encoding: "utf8", timeout: 1500 });

@@ -224,6 +224,7 @@ function humanizeLog(msg) {
     [/^RECONCILE: pulled (\d+) new task/, (m) => `📥 ${m[1]} new task(s) added from the plan`],
     [/^WORKTREE (\S+): (\S+).*/, (m) => `🛠 Working on ${m[1]} in a safe isolated copy`],
     [/^INFRA-RETRY (\S+) \((\d)\/3\): (.*)/, (m) => `⚠️ Environment hiccup on ${m[1]} — auto-retrying (${m[2]}/3): ${m[3]}`],
+    [/^FAILOVER (\S+): (\S+) auth-failed -> trying (\S+)/, (m) => `🔁 ${m[1]} continued with ${m[3]} after ${m[2]} needed reconnection`],
     [/^AUTH-PAUSE.*/, () => `🔑 Agent login/quota problem — open Agents & keys to reconnect`],
     [/^RECOVERED (\S+).*/, (m) => `🩹 Recovered ${m[1]} after an interruption — requeued`],
     [/^SKIP (\S+): (.*)/, (m) => `✅ ${m[1]} was already done: ${m[2]}`],
@@ -872,9 +873,15 @@ function saveFleetConfig(patch, flash, setFleetConfig) {
 
 function RoutingSettings({ apps, fleet, flash, pull, setFleetConfig }) {
   const [providers, setProviders] = useState(null);
+  const [providersError, setProvidersError] = useState("");
   const [draft, setDraft] = useState({});
-  const [fleetRoute, setFleetRoute] = useState(fleet?.routing || { routine: "ollama", standard: "codex", risky: "openai", fallback: ["codex", "openai", "anthropic"] });
-  useEffect(() => { fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => setProviders(d.providers || [])).catch(() => setProviders([])); }, []);
+  const [fleetRoute, setFleetRoute] = useState(fleet?.routing || { fallback: [] });
+  useEffect(() => {
+    fetch(`${API}/api/providers`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { setProviders(d.providers || []); setProvidersError(""); })
+      .catch((e) => { setProviders([]); setProvidersError(String(e.message || e)); });
+  }, []);
   useEffect(() => { if (fleet?.routing) setFleetRoute(fleet.routing); }, [fleet]);
   useEffect(() => {
     const next = {};
@@ -888,9 +895,37 @@ function RoutingSettings({ apps, fleet, flash, pull, setFleetConfig }) {
     setDraft(next);
   }, [apps]);
   if (!providers) return <div className="p-10 text-slate-500">Loading routing…</div>;
+  if (providersError) return <div className="p-6"><div className="rounded-xl border border-rose-900/50 bg-rose-950/20 p-4">
+    <div className="font-medium text-rose-100">Couldn't load providers</div>
+    <div className="text-sm text-rose-200/80 mt-1">Provider status is needed before you can edit fallback routing.</div>
+    <div className="text-xs text-rose-200/60 mt-2">{providersError}</div>
+    <button className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-rose-700/60 text-rose-100 hover:bg-rose-900/30" onClick={() => {
+    setProviders(null);
+    fetch(`${API}/api/providers`, { cache: "no-store" }).then((r) => r.json()).then((d) => { setProviders(d.providers || []); setProvidersError(""); }).catch((e) => { setProviders([]); setProvidersError(String(e.message || e)); });
+  }}><RefreshCw className="w-3.5 h-3.5" />Try again</button>
+  </div></div>;
   const providerById = Object.fromEntries(providers.map((p) => [p.id, p]));
   const update = (id, patch) => setDraft((d) => ({ ...d, [id]: { ...(d[id] || {}), ...patch } }));
   const saveFleetRouting = () => saveFleetConfig({ routing: fleetRoute }, flash, setFleetConfig);
+  const fallback = Array.isArray(fleetRoute.fallback) ? fleetRoute.fallback : [];
+  const setFallback = (next) => setFleetRoute((r) => ({ ...(r || {}), fallback: next }));
+  const addFallback = (id) => { if (id && !fallback.includes(id)) setFallback([...fallback, id]); };
+  const removeFallback = (idx) => setFallback(fallback.filter((_, i) => i !== idx));
+  const moveFallback = (idx, delta) => {
+    const to = idx + delta;
+    if (to < 0 || to >= fallback.length) return;
+    const next = [...fallback];
+    const [item] = next.splice(idx, 1);
+    next.splice(to, 0, item);
+    setFallback(next);
+  };
+  const available = providers.filter((p) => !fallback.includes(p.id));
+  const providerStatus = (p) => {
+    if (!p) return { label: "Unknown provider", cls: "text-amber-300", detail: "This provider is no longer in the registry." };
+    if (p.connected || p.auth === "none-local" || p.usable) return { label: "Usable now", cls: "text-emerald-300", detail: p.detail || "Ready for fallback runs." };
+    if (p.kind === "agentic-cli" && !p.installed) return { label: "Not installed", cls: "text-amber-300", detail: p.detail || `Install ${p.cli || "the CLI"} first.` };
+    return { label: "Needs connection", cls: "text-amber-300", detail: p.detail || "Connect this provider before it can run fallback tasks." };
+  };
   const save = (app) => {
     const d = draft[app.id] || {};
     return fetch(`${API}/api/app-config`, {
@@ -905,22 +940,40 @@ function RoutingSettings({ apps, fleet, flash, pull, setFleetConfig }) {
   };
   return (
     <div className="space-y-3">
-      <Section title="Route by difficulty" hint="Routine gates can use a cheap/local provider; risky work gets the strongest provider. Fallback chain is used when a provider is unavailable.">
-        <div className="grid md:grid-cols-3 gap-3">
-          {[
-            ["routine", "Routine gates"],
-            ["standard", "Standard work"],
-            ["risky", "Hard / risky"],
-          ].map(([key, label]) => <label key={key} className="text-xs text-slate-500">{label}
-            <select value={fleetRoute[key] || ""} onChange={(e) => setFleetRoute((r) => ({ ...r, [key]: e.target.value }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
-              {providers.map((p) => <option key={p.id} value={p.id}>{p.label}{p.connected || p.auth === "none-local" ? "" : " (not connected)"}</option>)}
+      <Section title="Fallback chain" hint="If your main coding agent is signed out or out of quota, FleetLoops continues with the next provider in this list for that run. Empty means fallback is off.">
+        {!fallback.length ? (
+          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+            No fallback providers are configured. Live runs use the app's selected provider and pause if that provider needs attention.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {fallback.map((id, idx) => {
+              const p = providerById[id];
+              const status = providerStatus(p);
+              return (
+                <div key={`${id}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 grid place-items-center text-xs font-semibold text-slate-300">{idx + 1}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-100 truncate">{p?.label || id}</div>
+                    <div className={`text-xs mt-0.5 ${status.cls}`}>{status.label}<span className="text-slate-500"> · {status.detail}</span></div>
+                  </div>
+                  <button title="Move up" disabled={idx === 0} onClick={() => moveFallback(idx, -1)} className="p-2 rounded-lg border border-slate-800 text-slate-300 hover:bg-slate-800 disabled:opacity-30"><ChevronUp className="w-4 h-4" /></button>
+                  <button title="Move down" disabled={idx === fallback.length - 1} onClick={() => moveFallback(idx, 1)} className="p-2 rounded-lg border border-slate-800 text-slate-300 hover:bg-slate-800 disabled:opacity-30"><ChevronDown className="w-4 h-4" /></button>
+                  <button title="Remove" onClick={() => removeFallback(idx)} className="p-2 rounded-lg border border-slate-800 text-rose-300 hover:bg-slate-800 hover:text-rose-200"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="text-xs text-slate-500 min-w-64">Add provider
+            <select value="" onChange={(e) => addFallback(e.target.value)} className="mt-1 w-full rounded-lg px-2 py-2 text-sm">
+              <option value="">{available.length ? "Choose a provider" : "All providers already listed"}</option>
+              {available.map((p) => <option key={p.id} value={p.id}>{p.label}{p.connected || p.auth === "none-local" ? "" : " (needs connection)"}</option>)}
             </select>
-          </label>)}
+          </label>
+          <button onClick={saveFleetRouting} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save fallback chain</button>
         </div>
-        <label className="block text-xs text-slate-500 mt-3">Fallback chain
-          <input value={(fleetRoute.fallback || []).join(", ")} onChange={(e) => setFleetRoute((r) => ({ ...r, fallback: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) }))} className="mt-1 w-full rounded-lg px-2 py-2 text-sm font-mono" />
-        </label>
-        <button onClick={saveFleetRouting} className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="w-4 h-4" />Save difficulty routing</button>
       </Section>
       {apps.length === 0 && <EmptyPanel icon={Route} title="No apps to route yet" body="Add a project from the macOS menu bar first. Routing appears here as soon as the bridge has a real app config." />}
       {apps.map((app) => {

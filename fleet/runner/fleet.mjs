@@ -21,7 +21,7 @@ import { platform, homedir } from "node:os";
 import { loadConfig, loadState, runLoopOnce, readAllEscalations, expandHome, STATE_DIR, CONFIG_FILE } from "./loop.mjs";
 import { runEvolvePass } from "./conditions.mjs";
 import { acquireRunLock, releaseRunLock } from "./util.mjs";
-import { addProjectToConfig } from "./project-onboard.mjs";
+import { addProjectToConfig, defaultAgentCommand } from "./project-onboard.mjs";
 
 // Pick the right loop: exit-condition pass if the app has gates, else the classic task loop.
 function appUsesConditions(app) {
@@ -266,7 +266,7 @@ function addLoop() {
     slug, name, repo: "~/path/to/repo", stage: "partial-build", loop: "paused",
     autonomy: "branch-approve", deployPolicy: "none", vcs: "unknown", needsBootstrap: true,
     northStar: "TODO — the single outcome that means v1 is done.",
-    agent: { adapter: "shell", command: `cd "{{REPO}}" && codex exec -c sandbox_workspace_write.network_access=true --sandbox workspace-write -c model_reasoning_effort={{REASONING}} - < "{{PROMPT_FILE}}"` },
+    agent: { adapter: "shell", command: defaultAgentCommand("codex") },
     triggers: ["command", "test-fail"], schedule: "—", retryCap: 3,
     commands: { install: "", build: "", test: "", deploy: "" },
     gates: ["TODO: a runnable test/build command"], guardrails: ["Never commit secrets"], offLimits: [".env"],

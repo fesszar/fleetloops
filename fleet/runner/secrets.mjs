@@ -43,7 +43,7 @@ function keychainDelete(account) {
   } catch { return false; }
 }
 
-export function getApiKey(provider, { env = process.env } = {}) {
+export function getApiKey(provider, { env = process.env, keychain = true } = {}) {
   if (!provider || provider.auth === "none-local") return "";
   const id = (provider.id || "").toUpperCase();
   // 1) FLEET_KEY_<ID> — the Swift app's fast-path injection (and what tests use).
@@ -52,7 +52,7 @@ export function getApiKey(provider, { env = process.env } = {}) {
   if (provider.envKey && env[provider.envKey]) return String(env[provider.envKey]).trim();
   // 3) the Keychain (so a key saved in the UI while the engine runs is picked up next task —
   //    no restart needed, since this is read at call time).
-  return keychainGet(provider.id) || "";
+  return keychain ? (keychainGet(provider.id) || "") : "";
 }
 
 // Persist / remove a provider key in the Keychain (macOS). Returns true on success.

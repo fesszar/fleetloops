@@ -193,7 +193,8 @@ exit 1
   ok(isWithinQuietHours(cfg.fleet, new Date("2026-06-22T23:00:00")) && isWithinQuietHours(cfg.fleet, new Date("2026-06-22T06:30:00")), "quiet hours handle overnight windows");
   ok(!isWithinQuietHours(cfg.fleet, new Date("2026-06-22T12:00:00")), "quiet hours allow daytime windows");
   const f2 = applyFleetConfigPatch(cfg, { routing: { routine: "ollama", standard: "codex", risky: "openai", fallback: ["codex", "anthropic"] }, schedule: { overnightDrain: { enabled: true, start: "22:30", end: "06:30" } }, notifications: { email: true, mobile: true, categories: { needs: true, review: false, stuck: true, cap: true, win: false } } });
-  ok(f2.ok && cfg.fleet.routing.risky === "openai" && cfg.fleet.routing.fallback.length === 2, "fleet-config stores difficulty routing and fallback chain");
+  const publicRouting = publicFleetConfig(cfg.fleet).routing;
+  ok(f2.ok && cfg.fleet.routing.risky === "openai" && cfg.fleet.routing.fallback.length === 2 && publicRouting.fallback.length === 2 && !("routine" in publicRouting), "fleet-config accepts legacy tier routing but only exposes fallback");
   ok(publicFleetConfig(cfg.fleet).schedule.overnightDrain.enabled === true, "fleet-config stores overnight drain schedule");
   ok(publicFleetConfig(cfg.fleet).notifications.email === true && publicFleetConfig(cfg.fleet).notifications.categories.review === false, "fleet-config stores notification channels and categories");
 }

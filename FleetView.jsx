@@ -1320,6 +1320,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   const [deepReady, setDeepReady] = useState(false);
   const [brainApproved, setBrainApproved] = useState(!!onboarding.brainApproved);
   const [gates, setGates] = useState([]);
+  const [gatesDirty, setGatesDirty] = useState(false);
+  const [pendingGateDrafts, setPendingGateDrafts] = useState([]);
+  const [gateDraftReady, setGateDraftReady] = useState(false);
   const [gatesSaved, setGatesSaved] = useState(!!onboarding.gatesApproved);
   const [mergePolicy, setMergePolicy] = useState(onboarding.mergePolicy || "approve");
   const [shipPolicy, setShipPolicy] = useState(onboarding.shipPolicy || "manual");
@@ -1348,6 +1351,13 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
         .catch(() => {});
     }
   }, [step, appId, onboarding?.brain?.status, onboarding?.brain?.origin, onboarding?.brain?.analyzing, brainDirty]);
+  useEffect(() => {
+    if (!Array.isArray(onboarding?.gates) || onboarding.gates.length === 0 || gatesSaved) return;
+    const hasAgentDraft = onboarding.gates.some((g) => g.source === "agent");
+    if (!hasAgentDraft) return;
+    if (gatesDirty) { setPendingGateDrafts(onboarding.gates); setGateDraftReady(true); }
+    else { setGates(onboarding.gates); setGateDraftReady(false); }
+  }, [onboarding?.gates, gatesDirty, gatesSaved]);
   useEffect(() => {
     const oldProject = window.fleetNativeProjectPicked;
     const oldDocs = window.fleetNativeDocumentsPicked;
@@ -1439,6 +1449,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
     setDeepText("");
     setDeepReady(false);
     setGates(d.gates || []);
+    setGatesDirty(false);
+    setPendingGateDrafts([]);
+    setGateDraftReady(false);
     setBrainApproved(false);
     setGatesSaved(false);
     flash("Project brain drafted from real local context");
@@ -1459,6 +1472,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
     if (!enabled.length) throw new Error("Keep at least one Definition-of-Done gate.");
     const d = await postJson("onboarding/gates", { appId, gates: enabled, mergePolicy, shipPolicy });
     setGates(d.gates || enabled);
+    setGatesDirty(false);
+    setPendingGateDrafts([]);
+    setGateDraftReady(false);
     setGatesSaved(true);
     flash("Definition-of-Done gates saved");
     await pull();
@@ -1502,7 +1518,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
           {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} cliAuth={cliAuth} setCliAuth={setCliAuth} />}
           {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
           {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} onboardingBrain={onboarding.brain} brainText={brainText} setBrainText={(v) => { setBrainDirty(true); setBrainText(v); }} brainDirty={brainDirty} deepReady={deepReady} onUseDeep={() => { setBrainText(deepText); setBrainDirty(false); setDeepReady(false); }} onKeepEdits={() => setDeepReady(false)} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
-          {step === 3 && <StepDone gates={gates} setGates={setGates} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} />}
+          {step === 3 && <StepDone gates={gates} setGates={(next) => { setGatesDirty(true); setGates(next); }} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} gateDraftReady={gateDraftReady} onUseGateDrafts={() => { setGates(pendingGateDrafts); setGatesDirty(false); setGateDraftReady(false); }} onKeepGateDrafts={() => setGateDraftReady(false)} />}
           {step === 4 && <StepLaunch app={activeApp} launch={launch} busy={busy} />}
         </div>
         <div className="px-5 py-4 border-t border-slate-800 flex items-center gap-2">
@@ -1750,18 +1766,32 @@ function StepUnderstand({ appId, app, understanding, onboardingBrain, brainText,
   );
 }
 
-function StepDone({ gates, setGates, mergePolicy, setMergePolicy, shipPolicy, setShipPolicy, saveGates, gatesSaved, busy }) {
+function StepDone({ gates, setGates, mergePolicy, setMergePolicy, shipPolicy, setShipPolicy, saveGates, gatesSaved, busy, gateDraftReady, onUseGateDrafts, onKeepGateDrafts }) {
   const updateGate = (i, patch) => setGates((gs) => gs.map((g, idx) => idx === i ? { ...g, ...patch } : g));
   const addGate = () => setGates((gs) => [...gs, { id: `gate-${gs.length + 1}`, say: "", check: "agent", effort: "M", enabled: true, source: "you" }]);
   return (
     <div className="grid lg:grid-cols-[1.15fr_.85fr] gap-4">
       <Section title="Definition of Done" hint="Keep, drop, or edit the gates before the loop starts. Who proves the gate is part of the contract.">
+        {gateDraftReady && (
+          <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100 flex items-center gap-2">
+            <span className="flex-1">Codebase-specific gate suggestions are ready.</span>
+            <button onClick={onUseGateDrafts} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400">View them</button>
+            <button onClick={onKeepGateDrafts} className="text-xs px-2.5 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/10">Keep my gates</button>
+          </div>
+        )}
         <div className="space-y-2">
           {gates.map((g, i) => <div key={g.id || i} className={`rounded-xl border p-3 ${g.enabled === false ? "border-slate-800 bg-slate-950 opacity-60" : "border-slate-800 bg-slate-950"}`}>
+            <div className="mb-2 flex flex-wrap gap-2 pl-8">
+              <Chip className={g.source === "agent" ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-slate-800 text-slate-400 border-slate-700"}>
+                {g.source === "agent" ? "Suggested from your codebase" : "Standard default"}
+              </Chip>
+              {g.effort && <Chip className="bg-slate-800 text-slate-400 border-slate-700">Effort {g.effort}</Chip>}
+            </div>
             <div className="flex items-start gap-2">
               <button onClick={() => updateGate(i, { enabled: g.enabled === false })} className={`w-6 h-6 rounded-md border flex items-center justify-center shrink-0 ${g.enabled === false ? "border-slate-700 text-slate-600" : "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"}`}>{g.enabled === false ? "" : "✓"}</button>
               <input value={g.say || ""} onChange={(e) => updateGate(i, { say: e.target.value })} placeholder="Gate in plain English" className="flex-1 rounded-lg px-2 py-1.5 text-sm" />
             </div>
+            {g.why && <div className="pl-8 mt-1 text-xs text-slate-500">{g.why}</div>}
             <div className="mt-2 grid sm:grid-cols-3 gap-2 pl-8">
               <select value={g.check || "agent"} onChange={(e) => updateGate(i, { check: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs">
                 <option value="auto">Loop proves</option>

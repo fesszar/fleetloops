@@ -127,6 +127,7 @@ export function normalizeGateDraft(gates = []) {
         probe: cleanString(g.probe),
         effort,
         source: cleanString(g.source) || "onboarding",
+        why: cleanString(g.why).slice(0, 260),
       };
     });
 }

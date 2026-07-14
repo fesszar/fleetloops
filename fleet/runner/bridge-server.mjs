@@ -132,7 +132,7 @@ function buildState() {
       autonomyEarned: (s.autonomy && s.autonomy.earned) || 0,
       conditions: (s.conditions || []).map((c) => ({ id: c.id, say: c.say, check: c.check, status: c.status,
         effort: c.effort, blockedBy: c.blockedBy || [], evidence: (c.evidence || "").slice(-400),
-        signoff: c.signoff || null, source: c.source || "seed", retryAfter: c.retryAfter || null })),
+        signoff: c.signoff || null, source: c.source || "seed", why: c.why || "", retryAfter: c.retryAfter || null })),
       suggestions: (s.suggestions || []).map((g) => ({ id: g.id, say: g.say, why: g.why || "" })),
       tasks: (s.backlog || []).map((t) => ({ id: t.id, title: t.title, status: t.status, difficulty: t.difficulty,
         deps: t.deps || [], ac: t.acceptance || t.ac || "", files: t.files || "", attempts: t.attempts || 0,
@@ -513,8 +513,9 @@ async function api(req, res, path) {
         return send(res, 200, { ok: true, appId: app.slug, proposed: (await import("./brain.mjs")).readProposed(app), facts: [], gates: app.exitConditions || [], copiedDocs: [], analyzing: true, brain: currentBrain });
       }
       const copiedDocs = attachDocumentsToApp(app, body.files || body.documents || []);
-      const result = writeProposedBrain(app, { mode, brief: body.brief || app.northStar || "", notes: body.notes || "" });
-      const analysis = beginOnboardingBrainAnalysis(app, cfg.fleet || {}, { mode });
+      const brief = body.brief || app.northStar || "";
+      const result = writeProposedBrain(app, { mode, brief, notes: body.notes || "" });
+      const analysis = beginOnboardingBrainAnalysis(app, cfg.fleet || {}, { mode, brief });
       applyOnboardingAction(cfg, { action: "save-project", step: 2, appId: app.slug, mode, projectDraft: { ...(cfg.fleet?.onboarding?.projectDraft || {}), copiedDocs } });
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
       return send(res, 200, { ...result, copiedDocs, analyzing: analysis.analyzing, brain: analysis.brain });

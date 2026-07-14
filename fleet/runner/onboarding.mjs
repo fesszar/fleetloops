@@ -1,17 +1,27 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { CONFIG_FILE, loadState, saveState, expandHome } from "./loop.mjs";
-import { comprehendProject, proposedFile, brainFile } from "./brain.mjs";
+import { comprehendProject, proposedFile, brainFile, readBrain, readProposed } from "./brain.mjs";
 import { normalizeGateDraft } from "./project-onboard.mjs";
 import { hasAgentProvider, resolveProvider } from "./providers/registry.mjs";
 import { pushLog } from "./util.mjs";
+import { runExplainer } from "./adapters.mjs";
+import { COSTLY } from "./gates.mjs";
 
 export const ONBOARDING_VERSION = "night-deck-1";
 export const BRAIN_ANALYZE_STALE_MS = 10 * 60 * 1000;
 
 const clean = (v) => String(v || "").trim();
 const iso = () => new Date().toISOString();
+const HERE = new URL(".", import.meta.url);
+const DRAFT_GATES_TEMPLATE = (() => { try { return readFileSync(new URL("../prompts/draft-gates.md", HERE), "utf8"); } catch { return ""; } })();
+let explainGateDraft = runExplainer;
+
+export function setGateDraftExplainerForTests(fn) {
+  explainGateDraft = typeof fn === "function" ? fn : runExplainer;
+}
 
 export function defaultOnboardingState() {
   return {
@@ -71,10 +81,12 @@ export function oldFleetSummary() {
 export function publicOnboarding(cfg) {
   const ob = normalizeOnboarding(cfg);
   const app = (cfg.apps || []).find((a) => a.slug === ob.appId);
+  const appState = app ? recoverStaleBrainAnalysis(app, cfg.fleet || {}).state : null;
   return {
     ...ob,
     oldFleet: oldFleetSummary(),
-    brain: app ? publicOnboardingBrain(app, cfg.fleet || {}) : { status: "none", origin: "ai", analyzing: false },
+    brain: app ? brainMeta(appState) : { status: "none", origin: "ai", analyzing: false },
+    gates: Array.isArray(appState?.onboardingGates) ? appState.onboardingGates : [],
   };
 }
 
@@ -287,6 +299,113 @@ export function draftGatesForApp(app, { mode = "code", brief = "" } = {}) {
   return normalizeGateDraft(gates);
 }
 
+function scriptsSummary(app) {
+  const bits = [];
+  const cmds = app.commands || {};
+  for (const [k, v] of Object.entries(cmds)) if (v) bits.push(`${k}: ${v}`);
+  return bits.length ? bits.join("\n") : "(no commands detected)";
+}
+
+function yamlValue(v) {
+  let out = clean(v);
+  if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) out = out.slice(1, -1);
+  return out.replace(/\\"/g, '"').trim();
+}
+
+export function parseGateDraft(raw) {
+  const text = String(raw || "");
+  const fenced = [...text.matchAll(/```ya?ml\s*([\s\S]*?)```/gi)].map((m) => m[1]).pop() || text;
+  const out = [];
+  let cur = null;
+  for (const line of fenced.split("\n")) {
+    const start = /^\s*-\s+say:\s*(.+)\s*$/.exec(line);
+    if (start) {
+      if (cur) out.push(cur);
+      cur = { say: yamlValue(start[1]) };
+      continue;
+    }
+    const attr = /^\s+(check|probe|effort|why):\s*(.*?)\s*$/.exec(line);
+    if (attr && cur) cur[attr[1]] = yamlValue(attr[2]);
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function normalizeSay(s) {
+  return clean(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function humanReleaseEquivalent(g) {
+  return g.check === "human" && /(release|ready|deploy|ship|store|owner confirms)/i.test(g.say || "");
+}
+
+function paymentEquivalent(g) {
+  return g.check === "human" && /(payment|billing|stripe|checkout)/i.test(g.say || "");
+}
+
+function smokeCheckProbe(repo, cmd) {
+  if (!cmd) return { runnable: false };
+  const r = spawnSync("bash", ["-lc", cmd], { cwd: repo, encoding: "utf8", timeout: 60 * 1000 });
+  const text = `${r.stdout || ""}\n${r.stderr || ""}`;
+  if (r.error) return { runnable: false };
+  if (r.status === 127 || /command not found|not found|No such file or directory/i.test(text)) return { runnable: false };
+  return { runnable: true };
+}
+
+function validateAgentGateDraft(app, gates, { mode = "code", brief = "" } = {}) {
+  const seen = new Set();
+  const repo = resolve(expandHome(app.repo || ""));
+  const valid = [];
+  for (const g of gates || []) {
+    const check = clean(g.check).toLowerCase();
+    const say = clean(g.say);
+    if (!say || !["auto", "agent", "human"].includes(check)) continue;
+    const key = normalizeSay(say);
+    if (!key || seen.has(key)) continue;
+    if (check === "auto" && COSTLY.test(g.probe || "")) continue;
+    const next = { ...g, say, check, effort: ["S", "M", "L"].includes(g.effort) ? g.effort : "M", source: "agent" };
+    if (next.check === "auto") {
+      const smoke = smokeCheckProbe(repo, next.probe || "");
+      if (!smoke.runnable) {
+        next.check = "agent";
+        next.say = `${next.say} (proposed command wasn't runnable here)`;
+        next.probe = "";
+      }
+    }
+    valid.push(next);
+    seen.add(key);
+    if (valid.length >= 8) break;
+  }
+  const floor = draftGatesForApp(app, { mode, brief });
+  if (!valid.some(humanReleaseEquivalent)) {
+    const release = floor.find((g) => g.id === "gate-human-release");
+    if (release) valid.push(release);
+  }
+  if (/payment|billing|stripe|checkout/i.test(`${brief} ${app.northStar || ""}`) && !valid.some(paymentEquivalent)) {
+    const payments = floor.find((g) => g.id === "gate-payments-human");
+    if (payments) valid.push(payments);
+  }
+  return normalizeGateDraft(valid);
+}
+
+export async function draftGatesWithAgent(app, fleet, { mode = "code", brief = "" } = {}) {
+  const fallback = draftGatesForApp(app, { mode, brief });
+  if (!DRAFT_GATES_TEMPLATE || !hasOnboardingAnalysisProvider(app)) return fallback;
+  const brain = (readProposed(app) || readBrain(app, { cap: 6000 }) || "").slice(0, 6000);
+  const prompt = DRAFT_GATES_TEMPLATE
+    .replaceAll("{{APP_NAME}}", app.name || app.slug)
+    .replaceAll("{{STACK}}", app.stack || "unknown")
+    .replaceAll("{{NORTH_STAR}}", app.northStar || brief || "(not given)")
+    .replaceAll("{{BRAIN}}", brain || "(no brain text available)")
+    .replaceAll("{{SCRIPTS}}", scriptsSummary(app))
+    .replaceAll("{{MODE}}", mode || "code");
+  let raw = "";
+  try { raw = await explainGateDraft(app, prompt, { reasoning: "high", timeoutMs: 4 * 60 * 1000 }); } catch { return fallback; }
+  const parsed = parseGateDraft(raw);
+  const valid = validateAgentGateDraft(app, parsed, { mode, brief });
+  return valid.some((g) => g.source === "agent") ? valid : fallback;
+}
+
 export function writeProposedBrain(app, { mode = "code", brief = "", notes = "" } = {}) {
   const { repo, readme, pkg, files, facts } = deterministicFacts(app, mode, brief);
   const deps = [...(pkg?.dependencies || []), ...(pkg?.devDependencies || [])].slice(0, 30);
@@ -321,9 +440,10 @@ ${notes || "(none yet)"}
   writeFileSync(proposedFile(app), body.endsWith("\n") ? body : body + "\n");
   const state = loadState(app, {});
   state.brain = { status: "pending", origin: "template", version: ((state.brain && state.brain.version) || 0) + 1, notes: "", at: iso(), onboarding: true, upgradeProposed: false };
+  state.onboardingGates = draftGatesForApp(app, { mode, brief });
   state.escalations = (state.escalations || []).filter((e) => e.taskId !== "__brain__");
   saveState(state);
-  return { ok: true, appId: app.slug, proposed: body, facts, gates: draftGatesForApp(app, { mode, brief }), brain: brainMeta(state), analyzing: false };
+  return { ok: true, appId: app.slug, proposed: body, facts, gates: state.onboardingGates, brain: brainMeta(state), analyzing: false };
 }
 
 export function approveOnboardingBrain(app, editedText = "") {
@@ -339,7 +459,7 @@ export function approveOnboardingBrain(app, editedText = "") {
   return { ok: true };
 }
 
-export function beginOnboardingBrainAnalysis(app, fleet = {}, { mode = "code" } = {}) {
+export function beginOnboardingBrainAnalysis(app, fleet = {}, { mode = "code", brief = "" } = {}) {
   const { state } = recoverStaleBrainAnalysis(app, fleet || {});
   if (state.brain?.status === "analyzing") return { analyzing: true, brain: brainMeta(state), started: false };
   if (mode === "scratch" || !hasOnboardingAnalysisProvider(app)) return { analyzing: false, brain: brainMeta(state), started: false };
@@ -348,7 +468,7 @@ export function beginOnboardingBrainAnalysis(app, fleet = {}, { mode = "code" } 
   saveState(state);
   const startedVersion = state.brain.version || 0;
   comprehendProject(app, fleet || {}, { timeoutMs: 5 * 60 * 1000 })
-    .then((proposed) => {
+    .then(async (proposed) => {
       const next = loadState(app, fleet || {});
       if (next.brain?.status !== "analyzing" || next.brain?.analyzeStartedAt !== startedAt) return;
       if (!proposed || proposed.length < 200) {
@@ -356,7 +476,9 @@ export function beginOnboardingBrainAnalysis(app, fleet = {}, { mode = "code" } 
         delete next.brain.analyzeStartedAt;
         pushLog(next, "BRAIN: deep comprehension didn't complete; continuing with the quick local summary");
       } else {
+        const gates = await draftGatesWithAgent(app, fleet || {}, { mode });
         next.brain = { ...(next.brain || {}), status: "pending", origin: "ai", version: startedVersion + 1, notes: "", at: iso(), onboarding: true };
+        next.onboardingGates = gates;
         delete next.brain.analyzeStartedAt;
         pushLog(next, "BRAIN: deep comprehension ready");
       }
@@ -390,6 +512,7 @@ export function saveOnboardingGates(app, fleet, gates = []) {
     evidence: "",
     signoff: null,
     source: g.source || "onboarding",
+    why: g.why || "",
     tries: 0,
     retryAfter: null,
     lastChecked: null,

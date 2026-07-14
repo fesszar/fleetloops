@@ -51,8 +51,8 @@ const gates = saveOnboardingGates(added.app, cfg.fleet, brain.gates);
 ok(gates.ok && added.app.exitConditions.length >= 3, "gate setup persists enabled Definition-of-Done gates");
 ok(loadState(added.app, cfg.fleet).conditions.length === added.app.exitConditions.length, "gate setup seeds state conditions");
 
-const launched = launchOnboardingApp(added.app, cfg.fleet);
-ok(launched.ok && added.app.loop === "running" && loadState(added.app, cfg.fleet).loop === "running", "launch resumes the app only after brain and gates are approved");
+const launched = await launchOnboardingApp(added.app, cfg.fleet);
+ok(launched.ok && added.app.loop === "running" && loadState(added.app, cfg.fleet).loop === "running", "launch resumes the app only after brain, gates, and pre-flight are approved");
 
 const step = applyOnboardingAction(cfg, { action: "complete" });
 ok(step.ok && cfg.fleet.onboarding.completed === true, "onboarding completion persists in fleet config");

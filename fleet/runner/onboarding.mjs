@@ -9,6 +9,7 @@ import { hasAgentProvider, resolveProvider } from "./providers/registry.mjs";
 import { pushLog } from "./util.mjs";
 import { runExplainer } from "./adapters.mjs";
 import { COSTLY } from "./gates.mjs";
+import { ensureStarterTask, runPreflight } from "./preflight.mjs";
 
 export const ONBOARDING_VERSION = "night-deck-1";
 export const BRAIN_ANALYZE_STALE_MS = 10 * 60 * 1000;
@@ -522,16 +523,29 @@ export function saveOnboardingGates(app, fleet, gates = []) {
   return { ok: true, gates: normalized };
 }
 
-export function launchOnboardingApp(app, fleet) {
+export async function launchOnboardingApp(app, fleet, { force = false } = {}) {
   const state = loadState(app, fleet || {});
   if (!app.exitConditions || !app.exitConditions.length) return { ok: false, status: 409, error: "define at least one gate before launch" };
   const brainStatus = state.brain && state.brain.status;
   if (brainStatus !== "approved") return { ok: false, status: 409, error: "approve the project brain before launch" };
+  const preflight = await runPreflight(app, fleet || {});
+  const failed = (preflight.checks || []).filter((c) => c.status === "fail");
+  if (failed.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Pre-flight checks need attention: ${failed.map((c) => c.label).join(", ")}.`,
+      preflight,
+    };
+  }
+  ensureStarterTask(app, fleet || {}, preflight);
   app.loop = "running";
   app.onboarding = { ...(app.onboarding || {}), launchedAt: iso(), brainApproved: true, gatesApproved: true };
-  state.loop = "running";
-  saveState(state);
-  return { ok: true };
+  const next = loadState(app, fleet || {});
+  next.loop = "running";
+  next.preflight = preflight;
+  saveState(next);
+  return { ok: true, preflight, forced: force === true };
 }
 
 export function attachDocumentsToApp(app, files = []) {

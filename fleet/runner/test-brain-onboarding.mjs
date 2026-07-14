@@ -91,8 +91,9 @@ try {
 
   const gates = saveOnboardingGates(noProvider.app, noProviderCfg.fleet, brain.gates);
   const launchReady = approveOnboardingBrain(noProvider.app, readProposed(noProvider.app));
-  const launched = launchOnboardingApp(noProvider.app, noProviderCfg.fleet);
-  ok(gates.ok && launchReady.ok && launched.ok, "onboarding can launch with template-only fallback brain");
+  noProvider.app.provider = { id: "ollama" };
+  const launched = await launchOnboardingApp(noProvider.app, noProviderCfg.fleet);
+  ok(gates.ok && launchReady.ok && launched.ok, "onboarding can launch with template-only fallback brain once a provider is configured");
 
   const bridgeState = join(SD, "bridge-state");
   const bridgeRepo = makeRepo("bridge-ai");

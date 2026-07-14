@@ -32,6 +32,7 @@ import { costSummary } from "./cost.mjs";
 import { applyAppConfigPatch, applyFleetConfigPatch, publicAppConfig, publicFleetConfig, isWithinQuietHours } from "./config-api.mjs";
 import { addProjectToConfig, createScratchProject } from "./project-onboard.mjs";
 import { handleCliProviderAction } from "./provider-cli.mjs";
+import { runPreflight } from "./preflight.mjs";
 import {
   applyOnboardingAction,
   approveOnboardingBrain,
@@ -129,6 +130,7 @@ function buildState() {
       retryCap: a.retryCap ?? cfg.fleet.defaultRetryCap, triggers: a.triggers || [], schedule: a.schedule || "—",
       guardrails: a.guardrails || [], offLimits: a.offLimits || [], skills: a.skills || [],
       loopPhase: s.loopPhase || null,
+      preflight: s.preflight || null,
       autonomyEarned: (s.autonomy && s.autonomy.earned) || 0,
       conditions: (s.conditions || []).map((c) => ({ id: c.id, say: c.say, check: c.check, status: c.status,
         effort: c.effort, blockedBy: c.blockedBy || [], evidence: (c.evidence || "").slice(-400),
@@ -255,6 +257,10 @@ async function autoApproveSweep(app, fleet) {
       t.status = "done"; delete t.branch;
       s.escalations = (s.escalations || []).filter((e) => e.taskId !== t.id);
       pushLog(s, `AUTO-APPROVED ${t.id}: ${m.note} (your standing rule: ${rule.key})`);
+      if (t.starter) {
+        pushLog(s, `FIRST-WIN ${t.id}: ${t.title}`);
+        notify(STATE_DIR, `First loop complete — ${t.title}`, "FleetLoops is now working through the real backlog.", { fleet });
+      }
       ledgerPush("auto-approve", rule.key, app.slug, t.id, "rule");
       notify(STATE_DIR, `${app.name}: auto-approved`, `${t.title} — per your standing rule`, { fleet });
       changed = true;
@@ -326,6 +332,20 @@ async function api(req, res, path) {
 
   if (path === "/api/cost" && req.method === "GET") {
     return send(res, 200, costSummary(STATE_DIR));
+  }
+
+  if (path === "/api/preflight" && req.method === "GET") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const slug = q.get("appId") || q.get("slug") || "";
+    const cfg = loadConfig();
+    const app = (cfg.apps || []).find((a) => a.slug === slug);
+    if (!app) return send(res, 404, { ok: false, error: "no app" });
+    if (q.get("cached") === "1") {
+      const state = loadState(app, cfg.fleet || {});
+      return send(res, 200, { ok: true, preflight: state.preflight || null });
+    }
+    const preflight = await runPreflight(app, cfg.fleet || {});
+    return send(res, 200, { ok: true, preflight });
   }
 
   if (path === "/api/fleet-config" && req.method === "GET") {
@@ -562,11 +582,11 @@ async function api(req, res, path) {
       const slug = String(body.appId || body.slug || cfg.fleet?.onboarding?.appId || "").trim();
       const app = (cfg.apps || []).find((a) => a.slug === slug);
       if (!app) return send(res, 404, { ok: false, error: "no onboarding project selected" });
-      const result = launchOnboardingApp(app, cfg.fleet || {});
+      const result = await launchOnboardingApp(app, cfg.fleet || {}, { force: body.force === true });
       if (!result.ok) return send(res, result.status || 409, result);
       const ob = applyOnboardingAction(cfg, { action: "complete", appId: app.slug });
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
-      return send(res, 200, { ok: true, onboarding: ob.onboarding, app: { id: app.slug, loop: app.loop } });
+      return send(res, 200, { ok: true, onboarding: ob.onboarding, app: { id: app.slug, loop: app.loop }, preflight: result.preflight || null });
     } catch (e) { return send(res, 500, { ok: false, error: String(e) }); }
   }
 
@@ -638,6 +658,10 @@ async function api(req, res, path) {
         const m = mergeBranch(repo, t);
         if (m.ok) {
           t.status = "done"; result = { ok: true, note: m.note }; pushLog(s, `MERGED ${taskId}: ${m.note}`); delete t.branch;
+          if (t.starter) {
+            pushLog(s, `FIRST-WIN ${taskId}: ${t.title}`);
+            notify(STATE_DIR, `First loop complete — ${t.title}`, "FleetLoops is now working through the real backlog.", { fleet: cfg.fleet });
+          }
           const ladder = recordCleanMerge(appCfg, cfg.fleet, s, { via: "human-approve" });
           if (ladder && ladder.promoted) { pushLog(s, `AUTONOMY: promoted to ${ladder.now} after a clean streak`); result.note += ` — autonomy promoted to ${ladder.now}`; }
         }
@@ -645,6 +669,10 @@ async function api(req, res, path) {
       } else {
         t.status = "done"; result = { ok: true, note: "marked done" };
         pushLog(s, `APPROVED ${taskId} (via dashboard)`);
+        if (t.starter) {
+          pushLog(s, `FIRST-WIN ${taskId}: ${t.title}`);
+          notify(STATE_DIR, `First loop complete — ${t.title}`, "FleetLoops is now working through the real backlog.", { fleet: cfg.fleet });
+        }
       }
       if (t.status === "done" && t.category === "readiness") t.gateVerified = true;
       // TRUST LEDGER: remember WHAT KIND of work you decided on (not the mechanism) so the

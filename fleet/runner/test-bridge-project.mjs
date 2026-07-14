@@ -1,6 +1,6 @@
 // test-bridge-project.mjs — HTTP-level coverage for adding a project through the local bridge.
 // Run: cd fleet/runner && FLEET_STATE_DIR=$(mktemp -d) node test-bridge-project.mjs
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,6 +17,12 @@ const cfgPath = join(SD, "bridge-fleet.config.json");
 mkdirSync(state, { recursive: true });
 mkdirSync(repo, { recursive: true });
 writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+writeFileSync(join(repo, "README.md"), "# Bridge Project\n\nHTTP onboarding fixture.\n");
+spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
+spawnSync("git", ["config", "user.name", "Tests"], { cwd: repo });
+spawnSync("git", ["add", "-A"], { cwd: repo });
+spawnSync("git", ["commit", "-qm", "base"], { cwd: repo });
 writeFileSync(cfgPath, JSON.stringify({ fleet: { defaultRetryCap: 2, notifications: { desktop: false } }, apps: [] }));
 
 let pass = 0, fail = 0;
@@ -75,7 +81,7 @@ try {
 
   const launch = await postPath("/api/onboarding/launch", { appId: "bridge-project" });
   const launchBody = await launch.json();
-  ok(launch.status === 200 && launchBody.ok && launchBody.onboarding.completed === true, "bridge launch completes onboarding and starts app");
+  ok(launch.status === 200 && launchBody.ok && launchBody.onboarding.completed === true && launchBody.preflight?.ok === true, "bridge launch completes onboarding after passing pre-flight");
 
   const dup = await post({ repo });
   const dupBody = await dup.json();

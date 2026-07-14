@@ -193,7 +193,7 @@ export function resolveBaseBranch(repoPath, app) {
 }
 
 // Worktrees live in a per-user CACHE dir, deliberately OUTSIDE the (synced) fleet folder.
-const WT_ROOT = process.env.FLEET_WORKTREE_DIR || join(homedir(), ".fleet", "worktrees");
+export const WT_ROOT = process.env.FLEET_WORKTREE_DIR || join(homedir(), ".fleet", "worktrees");
 function repoKey(repoPath) { let h = 0; for (const c of String(repoPath)) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
 function worktreePath(repoPath, slug, taskId) { return join(WT_ROOT, `${slug}-${repoKey(repoPath)}`, String(taskId).toLowerCase()); }
 
@@ -308,7 +308,7 @@ export function branchDiff(repoPath, task) {
 
 // Live-only safety gate. Refuses to run an agent against a repo that isn't a clean
 // git checkout, so a bad change is always isolated and reversible. No-op in dry-run.
-function safetyPreflight(app, fleet) {
+export function safetyPreflight(app, fleet, { reportOnly = false } = {}) {
   if (!fleet.safety?.requireGitForLive) return { ok: true };
   const repo = expandHome(app.repo);
   if (!existsSync(repo)) return { ok: false, reason: `repo not found at ${app.repo}`, permanent: true };
@@ -329,6 +329,16 @@ function safetyPreflight(app, fleet) {
     // pass blocked on "your uncommitted changes"). Strip status conservatively instead.
     const lines = dirty.split("\n").map((l) => l.replace(/^[ MADRCU?!]{1,2}\s+/, "").replace(/^"|"$/g, "").split(" -> ").pop().trim()).filter(Boolean);
     const nonChore = lines.filter((f) => !CHORE.test(f));
+    if (reportOnly) {
+      return {
+        ok: true,
+        repo,
+        dirty: true,
+        files: lines.slice(0, 8),
+        nonChoreFiles: nonChore.slice(0, 8),
+        wouldAutoStash: nonChore.length > 0 && fleet.safety?.autoStashDirty !== false,
+      };
+    }
     if (nonChore.length === 0) {
       G(repo, ["add", "-A"]);
       G(repo, ["-c", "user.email=fleet@local", "-c", "user.name=Fleet Loop", "commit", "-m", "chore: fleet housekeeping (build caches, lockfiles, agent files)"]);
@@ -351,7 +361,7 @@ function safetyPreflight(app, fleet) {
       return { ok: false, reason: `you have uncommitted changes to source files (${nonChore.slice(0, 3).join(", ")}${nonChore.length > 3 ? "…" : ""}) — commit or stash them so the loop doesn't touch your work`, permanent: false };
     }
   }
-  return { ok: true, repo };
+  return { ok: true, repo, dirty: false, files: [], nonChoreFiles: [], wouldAutoStash: false };
 }
 
 function fill(t, app, fleet, attempt, retryNote) {
@@ -802,6 +812,10 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
       }
       task.status = "done"; delete task.branch;
       pushLog(state, `DONE ${task.id}: ${m.note} — ${report.summary || ""}`);
+      if (task.starter) {
+        pushLog(state, `FIRST-WIN ${task.id}: ${task.title}`);
+        notify(STATE_DIR, `First loop complete — ${task.title}`, "FleetLoops is now working through the real backlog.", { fleet });
+      }
       const ladder = recordCleanMerge(app, fleet, state, { via: "auto-merge" });
       if (ladder && ladder.promoted) pushLog(state, `AUTONOMY: promoted to ${ladder.now} after a clean streak`);
       saveState(state);

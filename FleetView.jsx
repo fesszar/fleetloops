@@ -225,6 +225,7 @@ function humanizeLog(msg) {
     [/^WORKTREE (\S+): (\S+).*/, (m) => `🛠 Working on ${m[1]} in a safe isolated copy`],
     [/^INFRA-RETRY (\S+) \((\d)\/3\): (.*)/, (m) => `⚠️ Environment hiccup on ${m[1]} — auto-retrying (${m[2]}/3): ${m[3]}`],
     [/^FAILOVER (\S+): (\S+) auth-failed -> trying (\S+)/, (m) => `🔁 ${m[1]} continued with ${m[3]} after ${m[2]} needed reconnection`],
+    [/^FIRST-WIN (\S+): (.*)/, (m) => `🏁 First loop complete — ${m[2]}`],
     [/^AUTH-PAUSE.*/, () => `🔑 Agent login/quota problem — open Agents & keys to reconnect`],
     [/^RECOVERED (\S+).*/, (m) => `🩹 Recovered ${m[1]} after an interruption — requeued`],
     [/^SKIP (\S+): (.*)/, (m) => `✅ ${m[1]} was already done: ${m[2]}`],
@@ -540,7 +541,7 @@ export default function FleetView() {
         {view === "cost" && <CostPanel />}
       </main>
 
-      {activeApp && <AppDrawer app={activeApp} tab={appTab} setTab={setAppTab} post={post} onClose={() => setActiveAppId(null)} onToggle={toggleLoop} onStop={() => { post("loop", { slug: activeApp.id, action: "stop" }); flash(`${activeApp.name}: stopped`); }} onAddTask={addTask} onDeleteTask={deleteTask} onUpdateTask={updateTask} onMoveTask={moveTask} />}
+      {activeApp && <AppDrawer app={activeApp} tab={appTab} setTab={setAppTab} post={post} onClose={() => setActiveAppId(null)} onOpenSettings={() => { setActiveAppId(null); setView("providers"); }} onToggle={toggleLoop} onStop={() => { post("loop", { slug: activeApp.id, action: "stop" }); flash(`${activeApp.name}: stopped`); }} onAddTask={addTask} onDeleteTask={deleteTask} onUpdateTask={updateTask} onMoveTask={moveTask} />}
       {onboardingOpen && onboarding && onboarding.completed === false && (
         <OnboardingModal
           onboarding={onboarding}
@@ -548,6 +549,7 @@ export default function FleetView() {
           postJson={postJson}
           pull={pull}
           flash={flash}
+          onOpenSettings={() => { setOnboardingOpen(false); setView("providers"); }}
           onClose={() => setOnboardingOpen(false)}
           onDone={() => { setOnboardingOpen(false); setView("overview"); pull(); }}
         />
@@ -1351,7 +1353,7 @@ function CostPanel() {
   );
 }
 
-function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onDone }) {
+function OnboardingModal({ onboarding, apps, postJson, pull, flash, onOpenSettings, onClose, onDone }) {
   const [step, setStep] = useState(Math.max(0, Math.min(4, onboarding.step || 0)));
   const [providers, setProviders] = useState([]);
   const [cliAuth, setCliAuth] = useState({});
@@ -1379,6 +1381,9 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   const [gatesSaved, setGatesSaved] = useState(!!onboarding.gatesApproved);
   const [mergePolicy, setMergePolicy] = useState(onboarding.mergePolicy || "approve");
   const [shipPolicy, setShipPolicy] = useState(onboarding.shipPolicy || "manual");
+  const [preflight, setPreflight] = useState(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [preflightError, setPreflightError] = useState("");
   const activeApp = apps.find((a) => a.id === appId) || null;
 
   const loadProviders = useCallback(() => fetchProviders().then((rows) => {
@@ -1411,6 +1416,26 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
     if (gatesDirty) { setPendingGateDrafts(onboarding.gates); setGateDraftReady(true); }
     else { setGates(onboarding.gates); setGateDraftReady(false); }
   }, [onboarding?.gates, gatesDirty, gatesSaved]);
+  const runPreflightChecks = useCallback(async ({ cached = false } = {}) => {
+    if (!appId) return null;
+    setPreflightBusy(!cached);
+    setPreflightError("");
+    try {
+      const r = await fetch(`${API}/api/preflight?appId=${encodeURIComponent(appId)}${cached ? "&cached=1" : ""}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || "pre-flight failed");
+      if (d.preflight) setPreflight(d.preflight);
+      return d.preflight || null;
+    } catch (e) {
+      if (!cached) setPreflightError(String(e.message || e));
+      return null;
+    } finally {
+      setPreflightBusy(false);
+    }
+  }, [appId]);
+  useEffect(() => {
+    if (step === 4 && appId) runPreflightChecks({ cached: true });
+  }, [step, appId, runPreflightChecks]);
   useEffect(() => {
     const oldProject = window.fleetNativeProjectPicked;
     const oldDocs = window.fleetNativeDocumentsPicked;
@@ -1534,6 +1559,11 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
   });
   const launch = () => run(async () => {
     if (!appId) throw new Error("Add a project first.");
+    let report = preflight;
+    if (!report || (report.checks || []).some((c) => c.status === "fail")) {
+      report = await runPreflightChecks();
+    }
+    if (report && (report.checks || []).some((c) => c.status === "fail")) throw new Error("Fix the failed pre-flight checks before launch.");
     await postJson("onboarding/launch", { appId });
     flash("FleetLoops is running this project");
     await pull();
@@ -1572,7 +1602,11 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onClose, onD
           {step === 1 && <StepAdd mode={mode} setMode={setMode} repoPath={repoPath} setRepoPath={setRepoPath} projectName={projectName} setProjectName={setProjectName} scratchName={scratchName} setScratchName={setScratchName} scratchBrief={scratchBrief} setScratchBrief={setScratchBrief} workspace={workspace} setWorkspace={setWorkspace} documents={documents} setDocuments={setDocuments} pickProject={pickProject} pickDocuments={pickDocuments} appId={appId} activeApp={activeApp} createProject={createProject} busy={busy} />}
           {step === 2 && <StepUnderstand appId={appId} app={activeApp} understanding={understanding} onboardingBrain={onboarding.brain} brainText={brainText} setBrainText={(v) => { setBrainDirty(true); setBrainText(v); }} brainDirty={brainDirty} deepReady={deepReady} onUseDeep={() => { setBrainText(deepText); setBrainDirty(false); setDeepReady(false); }} onKeepEdits={() => setDeepReady(false)} brainApproved={brainApproved} study={study} approveBrain={approveBrain} busy={busy} />}
           {step === 3 && <StepDone gates={gates} setGates={(next) => { setGatesDirty(true); setGates(next); }} mergePolicy={mergePolicy} setMergePolicy={setMergePolicy} shipPolicy={shipPolicy} setShipPolicy={setShipPolicy} saveGates={saveGates} gatesSaved={gatesSaved} busy={busy} gateDraftReady={gateDraftReady} onUseGateDrafts={() => { setGates(pendingGateDrafts); setGatesDirty(false); setGateDraftReady(false); }} onKeepGateDrafts={() => setGateDraftReady(false)} />}
-          {step === 4 && <StepLaunch app={activeApp} launch={launch} busy={busy} />}
+          {step === 4 && <StepLaunch app={activeApp} launch={launch} busy={busy} preflight={preflight} preflightBusy={preflightBusy} preflightError={preflightError} runPreflight={() => runPreflightChecks()} onFix={(check) => {
+            if (check.id === "provider" || check.id === "setup-consent") onOpenSettings?.();
+            else if (check.id === "gate-probes") setStep(3);
+            else setStep(1);
+          }} />}
         </div>
         <div className="px-5 py-4 border-t border-slate-800 flex items-center gap-2">
           <button onClick={step === 0 ? onClose : back} disabled={busy} className="text-sm px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40">{step === 0 ? "Cancel" : "Back"}</button>
@@ -1874,14 +1908,82 @@ function PolicyPick({ title, value, setValue, options }) {
   return <div><div className="text-xs font-semibold text-slate-400 mb-2">{title}</div><div className="space-y-2">{options.map(([id, label]) => <button key={id} onClick={() => setValue(id)} className={`w-full text-left rounded-lg border px-3 py-2 text-sm ${value === id ? "border-indigo-500 bg-indigo-600/10 text-slate-100" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"}`}>{label}</button>)}</div></div>;
 }
 
-function StepLaunch({ app, launch, busy }) {
+function PreflightIcon({ status }) {
+  if (status === "pass") return <CheckCircle2 className="w-4 h-4 text-emerald-300" />;
+  if (status === "warn") return <AlertTriangle className="w-4 h-4 text-amber-300" />;
+  if (status === "fail") return <XCircle className="w-4 h-4 text-rose-300" />;
+  return <Clock className="w-4 h-4 text-slate-500" />;
+}
+
+function PreflightFixLabel({ id }) {
+  if (id === "provider") return "Open Agents & keys";
+  if (id === "setup-consent") return "Approve setup";
+  if (id === "gate-probes") return "Edit gates";
+  if (id === "repo-exists" || id === "base-branch" || id === "worktree" || id === "dirty-state") return "Open project setup";
+  if (id === "disk") return "Review disk space";
+  return "Fix it";
+}
+
+function PreflightPanel({ title = "Pre-flight", hint = "FleetLoops checks the repo, provider, setup script, gate commands, and disk space before a pass.", preflight, busy, error, onRun, onFix }) {
+  const failures = (preflight?.checks || []).filter((c) => c.status === "fail");
+  const warnings = (preflight?.checks || []).filter((c) => c.status === "warn");
   return (
-    <div className="max-w-2xl mx-auto text-center py-10">
-      <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 text-emerald-300 flex items-center justify-center mx-auto"><Rocket className="w-7 h-7" /></div>
-      <div className="font-display text-2xl font-bold mt-4">Ready to launch the loop</div>
-      <p className="text-sm text-slate-400 mt-2">The project brain and Definition-of-Done gates are saved. FleetLoops will resume this app and begin work from the approved context.</p>
-      {app && <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-3 text-left"><div className="text-sm font-medium">{app.name}</div><div className="text-xs text-slate-500 font-mono truncate mt-1">{app.repo}</div></div>}
-      <button disabled={busy} onClick={launch} className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><Rocket className="w-4 h-4" />Start first loop</button>
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-100">{title}</div>
+          <div className="text-xs text-slate-500 mt-0.5">{hint}</div>
+        </div>
+        <button disabled={busy} onClick={onRun} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"><RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} />Re-run checks</button>
+      </div>
+      {busy ? (
+        <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-400">Running pre-flight checks…</div>
+      ) : error ? (
+        <div className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>
+      ) : !preflight ? (
+        <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-400">No report yet. Run checks to verify this project's launch environment.</div>
+      ) : !(preflight.checks || []).length ? (
+        <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-400">The last pre-flight report had no checks. Re-run checks to refresh it.</div>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {(preflight.checks || []).map((c) => (
+            <div key={c.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 flex gap-3">
+              <PreflightIcon status={c.status} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-200">{c.label}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{c.detail || "No extra detail."}</div>
+                  </div>
+                  {c.status !== "pass" && onFix && <button onClick={() => onFix(c)} className="shrink-0 text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800"><PreflightFixLabel id={c.id} /></button>}
+                </div>
+                {c.fix && <div className={`text-xs mt-1 ${c.status === "fail" ? "text-rose-300" : "text-amber-300"}`}>{c.fix}</div>}
+              </div>
+            </div>
+          ))}
+          <div className="text-xs text-slate-500 pt-1">
+            {failures.length ? `${failures.length} failed check(s) must be fixed before live work.` : warnings.length ? `${warnings.length} warning(s). Live work can continue.` : "All checks passed."}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepLaunch({ app, launch, busy, preflight, preflightBusy, preflightError, runPreflight, onFix }) {
+  const failures = (preflight?.checks || []).filter((c) => c.status === "fail");
+  return (
+    <div className="max-w-3xl mx-auto py-8">
+      <div className="text-center">
+        <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 text-emerald-300 flex items-center justify-center mx-auto"><Rocket className="w-7 h-7" /></div>
+        <div className="font-display text-2xl font-bold mt-4">Ready to launch the loop</div>
+        <p className="text-sm text-slate-400 mt-2">The project brain and Definition-of-Done gates are saved. Your first run will be a small, safe task so you can watch the whole loop work end to end. Bigger work starts after that.</p>
+      </div>
+      {app && <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-3"><div className="text-sm font-medium">{app.name}</div><div className="text-xs text-slate-500 font-mono truncate mt-1">{app.repo}</div></div>}
+      <div className="mt-4"><PreflightPanel preflight={preflight} busy={preflightBusy || busy} error={preflightError} onRun={runPreflight} onFix={onFix} hint="FleetLoops checks the repo, provider, setup script, gate commands, and disk space before the first pass." /></div>
+      <div className="mt-5 text-center">
+        <button disabled={busy || preflightBusy || failures.length > 0} onClick={launch} className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"><Rocket className="w-4 h-4" />Start first loop</button>
+      </div>
     </div>
   );
 }
@@ -2094,7 +2196,7 @@ function ApprovalCard({ a, app, onResolve, onOpen }) {
   );
 }
 
-function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTask, onDeleteTask, onUpdateTask, onMoveTask }) {
+function AppDrawer({ app, tab, setTab, post, onClose, onOpenSettings, onToggle, onStop, onAddTask, onDeleteTask, onUpdateTask, onMoveTask }) {
   const s = LOOP_STATES[app.loop] || LOOP_STATES.idle;
   const done = app.tasks.filter((t) => t.status === "done").length;
   const total = app.tasks.length;
@@ -2103,10 +2205,12 @@ function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTas
   const reviewTasks = app.tasks.filter((t) => t.status === "review" || t.branch);
   const tabs = [
     { id: "now", label: "Now", icon: Activity },
+    { id: "preflight", label: "Pre-flight", icon: ShieldAlert },
     { id: "gates", label: `Gates${gates.length ? ` ${gatesMet}/${gates.length}` : ""}`, icon: ShieldCheck },
     { id: "runs", label: "Runs", icon: ListChecks },
     { id: "diff", label: `Diff${reviewTasks.length ? ` ${reviewTasks.length}` : ""}`, icon: FileDiff },
     { id: "brain", label: "Brain", icon: Brain },
+    { id: "settings", label: "Settings", icon: Settings },
   ];
   return (
     <div className="night-drawer" role="dialog" aria-modal="true" aria-label={`${app.name} cockpit`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -2136,10 +2240,16 @@ function AppDrawer({ app, tab, setTab, post, onClose, onToggle, onStop, onAddTas
         </div>
         <div className="flex-1 overflow-y-auto p-5">
           {tab === "now" && <AppNow app={app} done={done} total={total} gatesMet={gatesMet} gatesTotal={gates.length} />}
+          {tab === "preflight" && <CockpitPreflight app={app} onFix={(check) => {
+            if (check.id === "provider" || check.id === "setup-consent") onOpenSettings?.();
+            else if (check.id === "gate-probes") setTab("gates");
+            else setTab("settings");
+          }} />}
           {tab === "gates" && (gates.length ? <div className="max-w-3xl night-card rounded-xl p-4"><GateChecklist app={app} post={post} /></div> : <EmptyPanel icon={ShieldCheck} title="No gates yet" body="This app is still in backlog mode. When tasks finish, the planner proposes a definition-of-done checklist here." />)}
           {tab === "runs" && <RunHistory app={app} />}
           {tab === "diff" && <DiffTab app={app} reviewTasks={reviewTasks} />}
           {tab === "brain" && <BrainTab app={app} />}
+          {tab === "settings" && <LoopConfig app={app} />}
         </div>
       </div>
     </div>
@@ -2177,6 +2287,46 @@ function AppNow({ app, done, total, gatesMet, gatesTotal }) {
           <Stream app={app} />
         </Section>
       </div>
+    </div>
+  );
+}
+
+function CockpitPreflight({ app, onFix }) {
+  const [preflight, setPreflight] = useState(app.preflight || null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setPreflight(app.preflight || null);
+    setError("");
+  }, [app.id, app.preflight]);
+  const run = useCallback(async ({ cached = false } = {}) => {
+    setBusy(!cached);
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/preflight?appId=${encodeURIComponent(app.id)}${cached ? "&cached=1" : ""}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok || d.ok === false) throw new Error(d.error || "Could not run pre-flight checks.");
+      setPreflight(d.preflight || null);
+    } catch (e) {
+      if (!cached) setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [app.id]);
+  useEffect(() => {
+    if (!app.preflight) run({ cached: true });
+  }, [app.id, app.preflight, run]);
+  return (
+    <div className="max-w-3xl space-y-4">
+      <PreflightPanel
+        title="Pre-flight"
+        hint="Run these checks any time before resuming live work. Failed checks block onboarding launch; warnings explain what FleetLoops will handle safely."
+        preflight={preflight}
+        busy={busy}
+        error={error}
+        onRun={() => run()}
+        onFix={onFix}
+      />
     </div>
   );
 }

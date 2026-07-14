@@ -163,6 +163,95 @@ export function parseNewTasks(body) {
   return out;
 }
 
+function num(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const n = Number(String(v || "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+function jsonObjects(raw) {
+  const text = String(raw || "");
+  const out = [];
+  try {
+    const parsed = JSON.parse(text.trim());
+    if (parsed && typeof parsed === "object") out.push(parsed);
+  } catch {}
+  for (const line of text.split("\n")) {
+    const s = line.trim();
+    if (!s.startsWith("{") || !s.endsWith("}")) continue;
+    try {
+      const parsed = JSON.parse(s);
+      if (parsed && typeof parsed === "object") out.push(parsed);
+    } catch {}
+  }
+  return out;
+}
+
+function usageFromSnake(u = {}) {
+  const inputTokens = num(u.input_tokens ?? u.prompt_tokens ?? u.inputTokens ?? u.promptTokens);
+  const outputTokens = num(u.output_tokens ?? u.completion_tokens ?? u.outputTokens ?? u.completionTokens);
+  const cacheReadInputTokens = num(u.cache_read_input_tokens ?? u.cached_input_tokens ?? u.cacheReadInputTokens ?? u.cachedInputTokens);
+  const cacheCreationInputTokens = num(u.cache_creation_input_tokens ?? u.cacheCreationInputTokens);
+  const reasoningOutputTokens = num(u.reasoning_output_tokens ?? u.reasoningOutputTokens);
+  if (!inputTokens && !outputTokens && !cacheReadInputTokens && !cacheCreationInputTokens && !reasoningOutputTokens) return null;
+  return { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, reasoningOutputTokens };
+}
+
+function usageFromModelUsage(modelUsage = {}) {
+  let total = null;
+  for (const u of Object.values(modelUsage || {})) {
+    if (!u || typeof u !== "object") continue;
+    const parsed = usageFromSnake(u);
+    if (!parsed) continue;
+    total = total || { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, reasoningOutputTokens: 0, usd: 0 };
+    total.inputTokens += parsed.inputTokens || 0;
+    total.outputTokens += parsed.outputTokens || 0;
+    total.cacheReadInputTokens += parsed.cacheReadInputTokens || 0;
+    total.cacheCreationInputTokens += parsed.cacheCreationInputTokens || 0;
+    total.reasoningOutputTokens += parsed.reasoningOutputTokens || 0;
+    total.usd += num(u.costUSD ?? u.cost_usd);
+  }
+  if (!total) return null;
+  total.usd = +total.usd.toFixed(6);
+  return total;
+}
+
+function parseExplicitTextUsage(raw) {
+  const text = String(raw || "");
+  const input = /(?:input|prompt)\s*(?:tokens?)?\s*[:=]\s*([0-9][0-9,]*)/i.exec(text);
+  const output = /(?:output|completion)\s*(?:tokens?)?\s*[:=]\s*([0-9][0-9,]*)/i.exec(text);
+  if (!input || !output) return null;
+  return { inputTokens: num(input[1]), outputTokens: num(output[1]) };
+}
+
+export function parseCliUsage(providerId, rawOutput) {
+  const id = String(providerId || "");
+  const objects = jsonObjects(rawOutput);
+  if (id === "claude_cli") {
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const obj = objects[i];
+      const usage = usageFromSnake(obj.usage || {}) || usageFromModelUsage(obj.modelUsage || {});
+      const cost = num(obj.total_cost_usd ?? obj.totalCostUsd ?? usage?.usd);
+      if (usage || cost) {
+        return {
+          ...(usage || { inputTokens: 0, outputTokens: 0 }),
+          ...(cost ? { usd: cost, estimated: false } : {}),
+        };
+      }
+    }
+    return parseExplicitTextUsage(rawOutput);
+  }
+  if (id === "codex") {
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const obj = objects[i];
+      const usage = usageFromSnake(obj.usage || obj.token_count || obj.tokenCount || {});
+      if (usage) return { ...usage, estimated: true };
+    }
+    return parseExplicitTextUsage(rawOutput);
+  }
+  return null;
+}
+
 export const adapters = {
   // manual: don't call any agent. Print the prompt for the human to paste into
   // whatever chat they're using, and pause. Perfect for week 1 / mixed platforms.
@@ -178,13 +267,15 @@ export const adapters = {
     if (dryRun) return adapters.manual({ app, prompt });
     const r = await runShellAgent(app, fleet, prompt, logFile);
     const report = parseReport(r.out);
+    const provider = resolveProvider(app);
+    const usage = parseCliUsage(provider?.id, r.out);
     let failure = null;
     if (!report) {
       if (r.error) failure = "spawn";
       else if (r.timedOut) failure = "timeout";
       else failure = classifyAgentFailure(r.out); // "auth" | "output"
     }
-    return { raw: r.out, report, failure };
+    return { raw: r.out, report, failure, usage };
   },
 
   // api: a raw chat/completion provider (OpenAI/Anthropic/DeepSeek/Gemini/OpenRouter/Ollama).

@@ -13,8 +13,9 @@
 // chat-completions shape, so one codec ("openai") covers them; Anthropic needs its own.
 // Gemini is reached through its OpenAI-compatible endpoint to avoid a third codec.
 
-// pricing: USD per 1,000,000 tokens, used only for cost VISIBILITY (cost.mjs). Subscription
-// CLIs have no per-token bill, so pricing is null (we still surface token counts).
+// pricing: USD per 1,000,000 tokens, used only for cost VISIBILITY (cost.mjs).
+// estPricing: API-equivalent estimates for subscription CLIs. These are displayed separately
+// from real API spend and never count toward budget caps.
 // OpenRouter prices are hydrated live from its /models endpoint (pricing left as a hint).
 
 // applyReasoning(body, level, model): translate our universal low|medium|high dial onto each
@@ -44,11 +45,17 @@ export const PROVIDERS = {
   codex: {
     id: "codex", label: "Codex (ChatGPT)", kind: "agentic-cli", auth: "oauth-cli",
     cli: "codex", reasoningFlag: "model_reasoning_effort", pricing: null,
+    // Checked 2026-07-14 against https://developers.openai.com/api/docs/pricing:
+    // gpt-5.3-codex standard API price is $1.75 input / $14 output per 1M tokens.
+    estPricing: { "gpt-5.3-codex": { in: 1.75, out: 14 }, default: { in: 1.75, out: 14 } },
     blurb: "Uses your ChatGPT plan. Nothing to paste.",
   },
   claude_cli: {
     id: "claude_cli", label: "Claude Code", kind: "agentic-cli", auth: "oauth-cli",
     cli: "claude", pricing: null,
+    // Checked 2026-07-14 against https://www.anthropic.com/api:
+    // Sonnet 5 introductory API price is $2 input / $10 output per 1M tokens through 2026-08-31.
+    estPricing: { "claude-sonnet-5": { in: 2, out: 10 }, "claude-sonnet-4-6": { in: 3, out: 15 }, default: { in: 2, out: 10 } },
     blurb: "Uses your Claude subscription.",
   },
 

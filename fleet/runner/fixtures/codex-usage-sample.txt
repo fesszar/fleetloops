@@ -1,0 +1,5 @@
+# Captured on 2026-07-14 with codex-cli 0.144.3:
+# codex exec --json --ephemeral --sandbox read-only -C <temp-git-repo> -c model_reasoning_effort=low -
+# Non-usage warning lines and thread ids were omitted; the usage event shape is real.
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"usage probe done."}}
+{"type":"turn.completed","usage":{"input_tokens":20170,"cached_input_tokens":9984,"output_tokens":8,"reasoning_output_tokens":0}}

@@ -580,12 +580,21 @@ export async function runLoopOnce(app, fleet, { dryRun = true, internal = false 
     },
   });
   const { report, failure, usage } = run;
-  // Meter spend for raw-API providers (the harness returns `usage`; CLIs don't). Best-effort.
+  // Meter usage for APIs and CLIs. Subscription CLI records are kept separate from real API spend
+  // in cost.mjs so budget caps still protect only billable API dollars.
   if (usage && !dryRun) {
     try {
       const provider = run.provider || resolveProvider(app);
       recordCost(STATE_DIR, { app: app.slug, phase: "task", provider: provider?.id, model: run.model || resolveModel(app, provider), usage, usd: usage.usd });
     } catch {}
+  } else if (report && !dryRun) {
+    const provider = run.provider || resolveProvider(app);
+    if (provider?.kind === "agentic-cli") {
+      state.usageMisses = state.usageMisses || {};
+      state.usageMisses[provider.id] = (state.usageMisses[provider.id] || 0) + 1;
+      state.usageMisses.total = (state.usageMisses.total || 0) + 1;
+      pushLog(state, `USAGE-MISS ${task.id}: ${provider.label} did not report token usage`);
+    }
   }
 
   // Commit the agent's changes onto the work branch, INSIDE the worktree (its own index).

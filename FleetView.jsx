@@ -1307,46 +1307,101 @@ function SetupConsent({ pending, flash, reload }) {
   );
 }
 
-// COST — what raw-API providers have billed this month, split by app / provider / phase.
-// Subscription CLIs (Codex, Claude Code) have no per-token bill, so they don't appear here.
+// COST — real API spend plus API-equivalent subscription CLI usage.
 function CostPanel() {
   const [d, setD] = useState(null);
-  useEffect(() => { fetch(`${API}/api/cost`, { cache: "no-store" }).then((r) => r.json()).then(setD).catch(() => setD({ monthUsd: 0, byApp: {}, byProvider: {}, byPhase: {} })); }, []);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetch(`${API}/api/cost`, { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error("Cost data is not available")))
+      .then((json) => { setD(json); setError(""); })
+      .catch((e) => { setError(e.message || "Cost data is not available"); setD({ monthUsd: 0, todayUsd: 0, monthEstUsd: 0, todayEstUsd: 0, byApp: {}, byProvider: {}, byPhase: {}, estByApp: {}, estByProvider: {}, tokensByApp: {}, tokensByProvider: {}, usageMisses: 0, usageMissesByApp: {} }); });
+  }, []);
   if (!d) return <div className="p-10 text-slate-500">Loading…</div>;
   const usd = (n) => `$${(n || 0).toFixed(2)}`;
+  const nf = new Intl.NumberFormat();
   const rows = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
-  const max = Math.max(0.01, ...Object.values(d.byApp || {}), ...Object.values(d.byProvider || {}), ...Object.values(d.byPhase || {}));
-  const Bars = ({ title, obj }) => {
+  const tokenRows = (obj) => Object.entries(obj || {}).sort((a, b) => ((b[1]?.input || 0) + (b[1]?.output || 0)) - ((a[1]?.input || 0) + (a[1]?.output || 0)));
+  const apiMax = Math.max(0.01, ...Object.values(d.byApp || {}), ...Object.values(d.byProvider || {}), ...Object.values(d.byPhase || {}));
+  const estMax = Math.max(0.01, ...Object.values(d.estByApp || {}), ...Object.values(d.estByProvider || {}));
+  const Bars = ({ title, obj, max, tone = "bg-emerald-500" }) => {
     const r = rows(obj); if (!r.length) return null;
     return (
       <Section title={title}>
         <div className="space-y-2">{r.map(([k, v]) => (
           <div key={k}>
             <div className="flex justify-between text-xs text-slate-400 mb-1"><span className="capitalize">{k}</span><span>{usd(v)}</span></div>
-            <Bar value={(v / max) * 100} tone="bg-emerald-500" />
+            <Bar value={(v / max) * 100} tone={tone} />
           </div>
         ))}</div>
       </Section>
     );
   };
+  const TokenSection = ({ title, obj }) => {
+    const r = tokenRows(obj); if (!r.length) return null;
+    return (
+      <Section title={title} hint="Token counts are from the current month. Cached/context tokens are shown when the CLI reports them.">
+        <div className="divide-y divide-slate-800">
+          {r.map(([k, v]) => (
+            <div key={k} className="py-2 first:pt-0 last:pb-0">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="font-medium text-slate-300 truncate">{k}</span>
+                <span className="text-slate-500">{nf.format(v.runs || 0)} run{v.runs === 1 ? "" : "s"}</span>
+              </div>
+              <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-500">
+                <span>Input {nf.format(v.input || 0)}</span>
+                <span>Output {nf.format(v.output || 0)}</span>
+                <span>Cache read {nf.format(v.cacheRead || 0)}</span>
+                <span>Cache write {nf.format(v.cacheCreation || 0)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Section>
+    );
+  };
+  const hasApiSpend = (d.monthUsd || d.todayUsd) > 0 || rows(d.byApp).length || rows(d.byProvider).length;
+  const hasSubscription = (d.monthEstUsd || d.todayEstUsd) > 0 || rows(d.estByApp).length || rows(d.estByProvider).length || tokenRows(d.tokensByApp).length;
+  const hasMisses = (d.usageMisses || 0) > 0;
   return (
     <>
-      <Header title="Cost" subtitle="What your API providers billed this month — CLI subscriptions aren't metered here" />
+      <Header title="Cost" subtitle="API spend counts toward budgets. Subscription usage is shown as an API-equivalent estimate and does not count toward budgets." />
       <div className="p-6 overflow-y-auto max-w-3xl space-y-5">
+        {error && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">{error}. Try refreshing the app once the local bridge is running.</div>}
         <div className="grid sm:grid-cols-2 gap-3">
-        <div className="night-card rounded-xl p-5">
-          <div className="text-xs text-slate-400">Today</div>
-          <div className="text-3xl font-semibold text-cyan-300 mt-1">{usd(d.todayUsd)}</div>
+          <div className="night-card rounded-xl p-5">
+            <div className="text-xs text-slate-400">API spend today</div>
+            <div className="text-3xl font-semibold text-cyan-300 mt-1">{usd(d.todayUsd)}</div>
+            <div className="text-[11px] text-slate-500 mt-1">Counts toward daily API budgets</div>
+          </div>
+          <div className="night-card rounded-xl p-5">
+            <div className="text-xs text-slate-400">API spend this month</div>
+            <div className="text-3xl font-semibold text-emerald-400 mt-1">{usd(d.monthUsd)}</div>
+            <div className="text-[11px] text-slate-500 mt-1">Billable provider spend only</div>
+          </div>
+          <div className="night-card rounded-xl p-5">
+            <div className="text-xs text-slate-400">Subscription usage today</div>
+            <div className="text-3xl font-semibold text-indigo-300 mt-1">≈ {usd(d.todayEstUsd)}</div>
+            <div className="text-[11px] text-slate-500 mt-1">API-equivalent, included in CLI plans</div>
+          </div>
+          <div className="night-card rounded-xl p-5">
+            <div className="text-xs text-slate-400">Subscription usage this month</div>
+            <div className="text-3xl font-semibold text-violet-300 mt-1">≈ {usd(d.monthEstUsd)}</div>
+            <div className="text-[11px] text-slate-500 mt-1">Never trips API spend caps</div>
+          </div>
         </div>
-        <div className="night-card rounded-xl p-5">
-          <div className="text-xs text-slate-400">This month</div>
-          <div className="text-3xl font-semibold text-emerald-400 mt-1">{usd(d.monthUsd)}</div>
-        </div>
-        </div>
-        {d.monthUsd === 0 ? (
-          <div className="text-center py-12 text-slate-500"><Wallet className="w-10 h-10 mx-auto mb-3 text-slate-600" /><div className="font-medium text-slate-300">No spend yet</div><div className="text-sm">When an app runs on a raw-API provider, its usage and cost show up here. Subscription CLIs (Codex, Claude) aren't billed per token.</div></div>
-        ) : (
-          <><Bars title="By app" obj={d.byApp} /><Bars title="By provider" obj={d.byProvider} /><Bars title="By phase" obj={d.byPhase} /></>
+        {!hasApiSpend && !hasSubscription && !hasMisses ? (
+          <div className="text-center py-12 text-slate-500"><Wallet className="w-10 h-10 mx-auto mb-3 text-slate-600" /><div className="font-medium text-slate-300">No usage yet</div><div className="text-sm">After a run finishes, API spend and CLI subscription token usage will appear here.</div></div>
+        ) : (<>
+          {hasApiSpend && <div className="space-y-3"><div className="text-sm font-semibold text-slate-200">API spend</div><Bars title="By app" obj={d.byApp} max={apiMax} /><Bars title="By provider" obj={d.byProvider} max={apiMax} /><Bars title="By phase" obj={d.byPhase} max={apiMax} /></div>}
+          {hasSubscription && <div className="space-y-3"><div className="text-sm font-semibold text-slate-200">Subscription usage</div><Bars title="API-equivalent by app" obj={d.estByApp} max={estMax} tone="bg-indigo-500" /><Bars title="API-equivalent by provider" obj={d.estByProvider} max={estMax} tone="bg-violet-500" /><TokenSection title="Tokens by app" obj={d.tokensByApp} /><TokenSection title="Tokens by provider" obj={d.tokensByProvider} /></div>}
+        </>)}
+        {hasMisses && (
+          <Section title="Usage not reported" hint="Some CLI runs completed but did not include parseable token usage. They are counted here instead of being silently hidden.">
+            <div className="space-y-1.5 text-xs text-slate-400">
+              {rows(d.usageMissesByApp).map(([app, n]) => <div key={app} className="flex justify-between gap-3"><span className="truncate">{app}</span><span>{n} run{n === 1 ? "" : "s"}</span></div>)}
+            </div>
+          </Section>
         )}
       </div>
     </>

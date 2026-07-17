@@ -29,6 +29,8 @@ const claudeFixture = readFileSync(join(HERE, "fixtures", "claude-usage-sample.j
   const codex = parseCliUsage("codex", codexFixture);
   ok(codex && codex.inputTokens === 20170 && codex.outputTokens === 8, "codex JSONL fixture extracts input/output tokens");
   ok(codex.cacheReadInputTokens === 9984 && codex.estimated === true, "codex fixture preserves cached input tokens and marks estimate");
+  const codexFooter = parseCliUsage("codex", "codex\nresult: DONE\n\ntokens used\n25.848\n");
+  ok(codexFooter && codexFooter.inputTokens === 25848 && codexFooter.outputTokens === 0 && codexFooter.estimated === true, "codex tokens-used footer is parsed as estimated total usage");
 
   const claude = parseCliUsage("claude_cli", claudeFixture);
   ok(claude && claude.inputTokens === 1200 && claude.outputTokens === 80, "claude JSON fixture extracts input/output tokens");
@@ -100,6 +102,31 @@ printf '${F}yaml\\ntask_id: T1\\nresult: DONE\\nacceptance_met: true\\nsummary: 
   const rec = ledger.find((x) => x.app === slug && x.provider === "codex");
   ok(rec && rec.estimated === true && rec.subscription === true, "CLI run records an estimated subscription cost line");
   ok(rec.tokensIn === 20170 && rec.tokensOut === 8 && rec.cacheReadInputTokens === 9984, "cost line records token counts from the CLI output");
+}
+
+// 2b. Current Codex CLI may print only a compact total footer ("tokens used\n25.848").
+{
+  const agent = mkAgent("codex-footer-usage.sh", `echo "// footer usage $(date +%s%N)" >> "$1/app.js"
+cat <<'OUT'
+codex
+result: DONE
+task_id: T1
+summary: done with footer usage
+plain_summary: changed app
+user_impact: footer usage is visible
+acceptance_met: true
+tokens used
+25.848
+OUT`);
+  const slug = "cli-footer-usage";
+  const r = repo();
+  seed(slug, [task()]);
+  const res = await runLoopOnce(app(slug, r, agent), fleet(), { dryRun: false });
+  const st = rd(slug);
+  const ledger = readFileSync(join(SD, "cost.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const rec = ledger.find((x) => x.app === slug && x.provider === "codex");
+  ok(res.action === "completed" && rec?.tokensIn === 25848 && rec?.estimated === true, "Codex footer usage records subscription tokens in the cost ledger");
+  ok(!st.usageMisses?.codex, "Codex footer usage does not create a usage miss");
 }
 
 // 3. Estimated subscription usage never trips budgets; real API spend still does.

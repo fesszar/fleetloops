@@ -224,6 +224,23 @@ function parseExplicitTextUsage(raw) {
   return { inputTokens: num(input[1]), outputTokens: num(output[1]) };
 }
 
+function parseCompactTokenCount(v) {
+  const s = String(v || "").trim();
+  if (!s) return 0;
+  if (/^\d{1,3}([.,]\d{3})+$/.test(s)) return num(s.replace(/[.,]/g, ""));
+  return num(s);
+}
+
+function parseCodexFooterUsage(raw) {
+  const text = String(raw || "");
+  const match = /tokens\s+used\s*:?\s*(?:\r?\n\s*)?([0-9][0-9.,]*)/i.exec(text);
+  const total = parseCompactTokenCount(match?.[1]);
+  if (!total) return null;
+  // Current Codex CLI footer exposes only a total. Store it as an estimated input-token
+  // equivalent so subscription usage is visible instead of being counted as a miss.
+  return { inputTokens: total, outputTokens: 0 };
+}
+
 export function parseCliUsage(providerId, rawOutput) {
   const id = String(providerId || "");
   const objects = jsonObjects(rawOutput);
@@ -247,7 +264,8 @@ export function parseCliUsage(providerId, rawOutput) {
       const usage = usageFromSnake(obj.usage || obj.token_count || obj.tokenCount || {});
       if (usage) return { ...usage, estimated: true };
     }
-    return parseExplicitTextUsage(rawOutput);
+    const explicit = parseExplicitTextUsage(rawOutput) || parseCodexFooterUsage(rawOutput);
+    return explicit ? { ...explicit, estimated: true } : null;
   }
   return null;
 }

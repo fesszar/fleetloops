@@ -1649,7 +1649,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onOpenSettin
           </div>
           <div className="mt-2 flex justify-between text-[11px] text-slate-500">{ONBOARDING_STEPS.map((s, i) => <span key={s} className={i === step ? "text-slate-200" : ""}>{s}</span>)}</div>
         </div>
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-5 pb-24">
           {onboarding.oldFleet?.detected && !onboarding.migration?.choice && <MigrationPrompt onboarding={onboarding} postJson={postJson} pull={pull} flash={flash} />}
           {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 p-3 text-sm" role="alert">{error}</div>}
           {step === 0 && <StepConnect providers={providers} providerId={providerId} selectedProvider={selectedProvider} chooseProvider={chooseProvider} connectCli={connectCli} refreshCliProvider={refreshCliProvider} loadProviders={loadProviders} flash={flash} cliAuth={cliAuth} setCliAuth={setCliAuth} />}

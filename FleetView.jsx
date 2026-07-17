@@ -1360,8 +1360,8 @@ function CostPanel() {
       </Section>
     );
   };
-  const hasApiSpend = (d.monthUsd || d.todayUsd) > 0 || rows(d.byApp).length || rows(d.byProvider).length;
-  const hasSubscription = (d.monthEstUsd || d.todayEstUsd) > 0 || rows(d.estByApp).length || rows(d.estByProvider).length || tokenRows(d.tokensByApp).length;
+  const hasApiSpend = (d.monthUsd || d.todayUsd) > 0 || rows(d.byApp).length > 0 || rows(d.byProvider).length > 0;
+  const hasSubscription = (d.monthEstUsd || d.todayEstUsd) > 0 || rows(d.estByApp).length > 0 || rows(d.estByProvider).length > 0 || tokenRows(d.tokensByApp).length > 0;
   const hasMisses = (d.usageMisses || 0) > 0;
   return (
     <>
@@ -1467,8 +1467,7 @@ function OnboardingModal({ onboarding, apps, postJson, pull, flash, onOpenSettin
   useEffect(() => {
     if (!Array.isArray(onboarding?.gates) || onboarding.gates.length === 0 || gatesSaved) return;
     const hasAgentDraft = onboarding.gates.some((g) => g.source === "agent");
-    if (!hasAgentDraft) return;
-    if (gatesDirty) { setPendingGateDrafts(onboarding.gates); setGateDraftReady(true); }
+    if (gatesDirty && hasAgentDraft) { setPendingGateDrafts(onboarding.gates); setGateDraftReady(true); }
     else { setGates(onboarding.gates); setGateDraftReady(false); }
   }, [onboarding?.gates, gatesDirty, gatesSaved]);
   const runPreflightChecks = useCallback(async ({ cached = false } = {}) => {
@@ -1937,13 +1936,13 @@ function StepDone({ gates, setGates, mergePolicy, setMergePolicy, shipPolicy, se
             <div className="mt-2 grid sm:grid-cols-3 gap-2 pl-8">
               <select value={g.check || "agent"} onChange={(e) => updateGate(i, { check: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs">
                 <option value="auto">Loop proves</option>
-                <option value="agent">Agent works, you confirm</option>
+                <option value="agent">Agent + you confirm</option>
                 <option value="human">Only you confirm</option>
               </select>
               <select value={g.effort || "M"} onChange={(e) => updateGate(i, { effort: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs">
                 <option value="S">Small</option><option value="M">Medium</option><option value="L">Large</option>
               </select>
-              <input value={g.probe || ""} onChange={(e) => updateGate(i, { probe: e.target.value })} placeholder="Optional probe command" className="rounded-lg px-2 py-1.5 text-xs font-mono" />
+              <input value={g.probe || ""} onChange={(e) => updateGate(i, { probe: e.target.value })} placeholder="Probe command" className="rounded-lg px-2 py-1.5 text-xs font-mono" />
             </div>
           </div>)}
           <button onClick={addGate} className="text-xs px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Add gate</button>
